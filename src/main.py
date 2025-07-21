@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -7,7 +8,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError
 from sqlmodel import SQLModel
 
-from .core.database import init_engine, start_token_refresh, stop_token_refresh
+from .core.database import (
+    database_health,
+    init_engine,
+    start_token_refresh,
+    stop_token_refresh,
+)
 from .routers import orders
 
 logging.basicConfig(
@@ -25,9 +31,17 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
     await start_token_refresh()
+    health_check_task = asyncio.create_task(check_database_health(300))
     logger.info("Application startup complete")
+
     yield
+
     logger.info("Application shutdown initiated")
+    health_check_task.cancel()
+    try:
+        await health_check_task
+    except asyncio.CancelledError:
+        logger.info("Database health check task cancelled successfully")
     await stop_token_refresh()
     logger.info("Application shutdown complete")
 
@@ -88,6 +102,19 @@ app.include_router(orders.router)
 async def health_check():
     """Simple health check endpoint."""
     return {"status": "healthy", "timestamp": time.time()}
+
+
+async def check_database_health(interval: int):
+    while True:
+        try:
+            is_healthy = await database_health()
+            if not is_healthy:
+                logger.warning(
+                    "Database Health check failed. Connection is not healthy."
+                )
+        except Exception as e:
+            logger.error(f"Exception during health check: {e}")
+        await asyncio.sleep(interval)
 
 
 @app.get("/", tags=["root"])

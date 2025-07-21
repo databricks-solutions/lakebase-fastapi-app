@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 
 from databricks.sdk import WorkspaceClient
 from dotenv import load_dotenv
-from sqlalchemy import URL, event
+from sqlalchemy import URL, event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -158,3 +158,20 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
         raise RuntimeError("Engine not initialized; call init_engine() first")
     async with AsyncSessionLocal() as session:
         yield session
+
+
+async def database_health() -> bool:
+    global engine
+
+    if engine is None:
+        logger.error("Database engine failed to initialize.")
+        return False
+
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+            logger.info("Database connection is healthy.")
+            return True
+    except Exception as e:
+        logger.error("Database health check failed: %s", e)
+        return False
