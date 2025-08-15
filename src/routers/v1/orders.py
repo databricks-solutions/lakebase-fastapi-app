@@ -1,11 +1,11 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.database import get_async_db
-from ..models.orders import (
+from core.database import get_async_db
+from models.orders import (
     CursorPaginationInfo,
     Order,
     OrderCount,
@@ -20,12 +20,20 @@ from ..models.orders import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/orders", tags=["orders"])
+router = APIRouter(tags=["orders"])
 
 
 @router.get("/count", response_model=OrderCount, summary="Get total order count")
 async def get_order_count(db: AsyncSession = Depends(get_async_db)):
-    """Get the total number of orders in the database."""
+    """
+    Get the total number of orders in the database.
+
+    Returns:
+        OrderCount: The total count of orders in the database
+
+    Raises:
+        HTTPException: If the query fails
+    """
     try:
         stmt = select(func.count(Order.o_orderkey))
         result = await db.execute(stmt)
@@ -38,7 +46,15 @@ async def get_order_count(db: AsyncSession = Depends(get_async_db)):
 
 @router.get("/sample", response_model=OrderSample, summary="Get 5 random order keys")
 async def get_sample_orders(db: AsyncSession = Depends(get_async_db)):
-    """Get 5 random order keys for testing."""
+    """
+    Get 5 sample order keys for testing and development purposes.
+
+    Returns:
+        OrderSample: A list of 5 order keys from the database
+
+    Raises:
+        HTTPException: If the query fails
+    """
     try:
         stmt = select(Order.o_orderkey).limit(5)
         result = await db.execute(stmt)
@@ -67,14 +83,26 @@ async def get_orders_by_page(
     """
     Get orders using traditional page-based pagination.
 
-    **Best for:**
-    - Small to medium datasets
-    - Building traditional pagination UI with page numbers
-    - When users need to jump to specific pages
+    Args:
+        page: Page number (1-based)
+        page_size: Number of records per page (max 1000)
+        include_count: Include total count for pagination info
+        db: Database session
 
-    **Usage:**
-    - `/orders/pages?page=1&page_size=100`
-    - `/orders/pages?page=5&page_size=50&include_count=false`
+    Returns:
+        OrderListResponse: Orders with pagination information
+
+    Raises:
+        HTTPException: If the query fails
+
+    Best for:
+        - Small to medium datasets
+        - Building traditional pagination UI with page numbers
+        - When users need to jump to specific pages
+
+    Usage:
+        - `/orders/pages?page=1&page_size=100`
+        - `/orders/pages?page=5&page_size=50&include_count=false`
     """
     try:
         if include_count:
@@ -166,16 +194,27 @@ async def get_orders_by_cursor(
     """
     Get orders using efficient cursor-based pagination.
 
-    **Best for:**
-    - Large datasets (millions of records)
-    - High-performance applications
-    - Infinite scroll UIs
-    - Real-time data feeds
+    Args:
+        cursor: Start after this order key (0 for beginning)
+        page_size: Number of records to fetch (max 1000)
+        db: Database session
 
-    **Usage:**
-    - First page: `/orders/stream?cursor=0&page_size=100`
-    - Next page: `/orders/stream?cursor=100&page_size=100`
-    - Jump to key: `/orders/stream?cursor=12345&page_size=100` (shows records after key 12345)
+    Returns:
+        OrderListCursorResponse: Orders with cursor pagination information
+
+    Raises:
+        HTTPException: If the query fails
+
+    Best for:
+        - Large datasets (millions of records)
+        - High-performance applications
+        - Infinite scroll UIs
+        - Real-time data feeds
+
+    Usage:
+        - First page: `/orders/stream?cursor=0&page_size=100`
+        - Next page: `/orders/stream?cursor=100&page_size=100`
+        - Jump to key: `/orders/stream?cursor=12345&page_size=100` (shows records after key 12345)
     """
     try:
         stmt = (
@@ -236,11 +275,19 @@ async def get_orders_by_cursor(
 
 
 @router.get("/{order_key}", response_model=OrderRead, summary="Get an order by its key")
-async def read_order(
-    order_key: int, response: Response, db: AsyncSession = Depends(get_async_db)
-):
+async def read_order(order_key: int, db: AsyncSession = Depends(get_async_db)):
     """
     Fetch a single order by its key, returning all order fields.
+
+    Args:
+        order_key: The unique key of the order to retrieve
+        db: Database session
+
+    Returns:
+        OrderRead: Complete order information
+
+    Raises:
+        HTTPException: 400 for invalid order key, 404 if order not found, 500 for database errors
     """
     try:
         if order_key <= 0:
@@ -278,8 +325,16 @@ async def update_order_status(
     """
     Update the status for a specific order.
 
-    - **order_key**: The key of the order to update
-    - **o_orderstatus**: The new status to assign
+    Args:
+        order_key: The key of the order to update
+        status_data: The new order status data
+        db: Database session
+
+    Returns:
+        OrderStatusUpdateResponse: Confirmation of the status update
+
+    Raises:
+        HTTPException: 400 for invalid order key, 404 if order not found, 500 for database errors
     """
     try:
         if order_key <= 0:

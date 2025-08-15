@@ -8,13 +8,15 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError
 from sqlmodel import SQLModel
 
-from .core.database import (
+from routers import api_router
+
+from core.database import (
+    check_database_exists,
     database_health,
     init_engine,
     start_token_refresh,
     stop_token_refresh,
 )
-from .routers import orders
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -24,25 +26,46 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
     logger.info("Application startup initiated")
-    init_engine()
-    from .core.database import engine
 
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    await start_token_refresh()
-    health_check_task = asyncio.create_task(check_database_health(300))
+    # Check if database exists before initializing
+    database_exists = check_database_exists()
+    health_check_task = None
+
+    if database_exists:
+        try:
+            init_engine()
+            from core.database import engine
+
+            async with engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
+            await start_token_refresh()
+            health_check_task = asyncio.create_task(check_database_health(300))
+            logger.info("Database engine initialized and health monitoring started")
+        except Exception as e:
+            logger.error(f"Failed to initialize database engine: {e}")
+            logger.info("Application will start without database functionality")
+    else:
+        logger.info(
+            "No Lakebase database instance found - starting with limited functionality"
+        )
+        logger.info(
+            "Use POST /api/v1/resources/create-lakebase-resources to create database resources"
+        )
+
     logger.info("Application startup complete")
 
     yield
 
     logger.info("Application shutdown initiated")
-    health_check_task.cancel()
-    try:
-        await health_check_task
-    except asyncio.CancelledError:
-        logger.info("Database health check task cancelled successfully")
-    await stop_token_refresh()
+    if health_check_task:
+        health_check_task.cancel()
+        try:
+            await health_check_task
+        except asyncio.CancelledError:
+            logger.info("Database health check task cancelled successfully")
+        await stop_token_refresh()
     logger.info("Application shutdown complete")
 
 
@@ -95,7 +118,7 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 
-app.include_router(orders.router)
+app.include_router(api_router)
 
 
 @app.get("/health", tags=["health"])
