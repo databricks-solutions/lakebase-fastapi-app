@@ -24,6 +24,8 @@ Learn more about Databricks Lakebase [here](https://docs.databricks.com/aws/en/o
 ## 🌟 Features
 - **FastAPI REST API** with async/await support
 - **Databricks Lakebase Integration** with OAuth token management
+- **Automatic Resource Management** - create and delete Lakebase resources on-demand
+- **Dynamic Endpoint Registration** - endpoints are conditionally loaded based on database availability
 - **Automatic Token Refresh** with configurable intervals
 - **Production-Ready Architecture** with domain-driven design
 - **Connection Pooling** with optimized settings for high-traffic scenarios
@@ -33,31 +35,11 @@ Learn more about Databricks Lakebase [here](https://docs.databricks.com/aws/en/o
 
 ## 📋 Prerequisites
 - **Databricks Workspace**: Permissions to create apps and database instances
-- **Database Instance** [How to create a database instance](https://docs.databricks.com/aws/en/oltp/create/)
-- **Database Registered Catalog** [How to create a registered catalog/database](https://docs.databricks.com/aws/en/oltp/register-uc)
 - **Python 3.11+** and [uv package manager](https://docs.astral.sh/uv/getting-started/)
 - **Environment Variables** configured (see Configuration section)
 
 ## 🚀 Quick Start
 
-### Configure Orders Table: 
-Every Databricks workspace is pre-configured with example datasets. We'll be using the table samples.tpch.orders as our source table.
- 1. Navigate to samples.tpch.orders in the Catalog Explorer
- 2. Create -> Synced Table
- 3. In the synced table popup: 
-
-   | Field Name | Description | Example |
-   |----------|-------------|---------|
-   | `name` | Catalog.schema of where to sync your table | `my-database-instance.public` |
-   | `table_name` | target table name | `orders_synced` |
-   | `database_instance` | Target Instance | `my-database-instance` |
-   | `primary_key` | Target PK | `o_orderkey` |
-   | `timeseries_key` | Leave blank | `Blank` |
-   | `sync_Mode` | How often to sync | `Snapshot` |
-   | `metadata_location` | Where to store metadata | `<catalog>.<schema> that you have access to` |
-
-Once the sync is complete you should see orders_synced in your postgres public schema.
-For troubleshooting or guidance see: [How to create a synced table](https://docs.databricks.com/aws/en/oltp/sync-data/sync-table)
 
 ### Local Development
 
@@ -82,6 +64,25 @@ For troubleshooting or guidance see: [How to create a synced table](https://docs
    - API: `http://localhost:8000`
    - Interactive docs: `http://localhost:8000/docs`
 
+5. **Create Lakebase Resources for Orders endpoints:**
+   - Docs page: `http://localhost:8000/docs`
+   - Click Dropdown: `/api/v1/resources/create-lakebase-resources`
+   - Click 'Try it Out'
+   - Set create_resources = true 
+   - Click Execute (**Resources will take several minutes to deploy**)
+
+6. **Orders Endpoints:**
+   - Confirm resources from step 5 are deployed.
+   - Restart the fastapi service
+   - You should now see the /orders endpoints.
+
+7. **Delete Lakebase Resources:**
+   - Docs page: `http://localhost:8000/docs`
+   - Click Dropdown: `/api/v1/resources/delete-lakebase-resources`
+   - Click 'Try it Out'
+   - Set confirm_deletion = true 
+   - Click Execute
+
 ### Databricks Apps Deployment
    *assumes local development steps have been completed.
 1. **Databricks UI: Create Custom App:**
@@ -100,9 +101,11 @@ For troubleshooting or guidance see: [How to create a synced table](https://docs
 
    | Variable | Description | Example |
    |----------|-------------|---------|
-   | `DATABRICKS_DATABASE_INSTANCE` | Database instance name | `my-database-instance` |
-   | `DATABRICKS_DATABASE_NAME` | Database name | `database` |
-   | `DATABRICKS_HOST` | Workspace URL (for apps) | `https://workspace.cloud.databricks.com` |
+   | `LAKEBASE_INSTANCE_NAME` | Lakebase database instance name | `my-lakebase-instance` |
+   | `LAKEBASE_DATABASE_NAME` | Lakebase database name | `demo-database` |
+   | `LAKEBASE_CATALOG_NAME` | Lakebase catalog name | `my-lakebase-catalog` |
+   | `SYNCHED_TABLE_STORAGE_CATALOG` | Catalog for synced table metadata | `my_catalog` |
+   | `SYNCHED_TABLE_STORAGE_SCHEMA` | Schema for synced table metadata | `my_schema` |
    | `DATABRICKS_DATABASE_PORT` | Postgres Port | `5432` |
    | `DEFAULT_POSTGRES_SCHEMA` | Database schema | `public` |
    | `DEFAULT_POSTGRES_TABLE` | Table name | `orders_synced` |
@@ -132,13 +135,18 @@ For troubleshooting or guidance see: [How to create a synced table](https://docs
 ### Project Structure
 ```
 src/
+├── app.py                   # Main FastAPI application with dynamic endpoint loading
 ├── core/
-│   └── database.py          # Database connection with automatic token refresh
+│   └── database.py         # Database connection with automatic token refresh
 ├── models/
-│   └── orders.py           # Orders model using SQLModel
-├── routers/
-│   └── orders.py           # Orders API endpoints
-└── main.py                 # FastAPI application
+│   ├── lakebase.py         # Lakebase resource management models
+│   └── orders.py           # Orders models using SQLModel
+└── routers/
+    ├── __init__.py         # Dynamic router registration logic
+    └── v1/                 # API v1 endpoints
+        ├── healthcheck.py  # Health check endpoints
+        ├── lakebase.py     # Lakebase resource management endpoints
+        └── orders.py       # Orders endpoints (loaded dynamically)
 ```
 
 ### Database Connection Strategy
@@ -152,34 +160,55 @@ src/
 
 ## 📚 API Documentation
 
-### Example Endpoints
+### Core Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/orders/count` | GET | Get total order count |
-| `/orders/sample` | GET | Get 5 random order keys |
-| `/orders/{order_key}` | GET | Get order by key |
-| `/orders/pages` | GET | Page-based pagination (traditional) |
-| `/orders/stream` | GET | Cursor-based pagination (high performance) |
-| `/orders/{order_key}/status` | POST | Update order status |
+| `/health` | GET | Simple health check |
+| `/api/v1/health/database` | GET | Database health check |
+| `/api/v1/resources/create-lakebase-resources` | POST | Create Lakebase resources |
+| `/api/v1/resources/delete-lakebase-resources` | DELETE | Delete Lakebase resources |
+
+### Dynamic Order Endpoints
+*These endpoints are only available when a Lakebase database instance exists*
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/orders/count` | GET | Get total order count |
+| `/api/v1/orders/sample` | GET | Get 5 random order keys |
+| `/api/v1/orders/{order_key}` | GET | Get order by key |
+| `/api/v1/orders/pages` | GET | Page-based pagination (traditional) |
+| `/api/v1/orders/stream` | GET | Cursor-based pagination (high performance) |
+| `/api/v1/orders/{order_key}/status` | POST | Update order status |
 
 ### Example Requests
 
 ```bash
-# Get order count
-curl http://localhost:8000/orders/count
+# Check if app is running
+curl http://localhost:8000/health
+
+# Check database health
+curl http://localhost:8000/api/v1/health/database
+
+# Create Lakebase resources
+curl -X POST http://localhost:8000/api/v1/resources/create-lakebase-resources \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Get order count (only available after resources are created)
+curl http://localhost:8000/api/v1/orders/count
 
 # Get specific order
-curl http://localhost:8000/orders/1
+curl http://localhost:8000/api/v1/orders/1
 
 # Get paginated orders
-curl "http://localhost:8000/orders/pages?page=1&page_size=10"
+curl "http://localhost:8000/api/v1/orders/pages?page=1&page_size=10"
 
 # Get cursor-based orders
-curl "http://localhost:8000/orders/stream?cursor=0&page_size=10"
+curl "http://localhost:8000/api/v1/orders/stream?cursor=0&page_size=10"
 
 # Update order status
-curl -X POST http://localhost:8000/orders/1/status \
+curl -X POST http://localhost:8000/api/v1/orders/1/status \
   -H "Content-Type: application/json" \
   -d '{"o_orderstatus": "F"}'
 ```
@@ -251,10 +280,6 @@ For applications handling thousands of requests per minute:
 ## 🚨 Troubleshooting
 
 ### Common Issues
-
-**"Resource not found" on startup:**
-- Verify `DATABRICKS_DATABASE_INSTANCE` exists in workspace
-- Check database instance permissions
 
 **Connection timeouts:**
 - Increase `DB_COMMAND_TIMEOUT` for slow queries
