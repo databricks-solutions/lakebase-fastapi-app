@@ -14,7 +14,7 @@ from databricks.sdk.service.database import (
     SyncedTableSchedulingPolicy,
     SyncedTableSpec,
 )
-from models.lakebase import LakebaseResourcesDeleteResponse, LakebaseResourcesResponse
+from ...models.lakebase import LakebaseResourcesDeleteResponse, LakebaseResourcesResponse
 
 from fastapi import APIRouter, HTTPException, Query
 
