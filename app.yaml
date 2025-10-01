@@ -1,6 +1,12 @@
 command: ["uvicorn", "src.main:app"]
 
 env:
+# Authentication Mode
+# Set to 'true' to enable per-user authentication using Databricks Apps headers
+# Set to 'false' for app-level authentication (default)
+  - name: 'USER_BASED_AUTHENTICATION'
+    value: 'false'
+    
   - name: 'DATABRICKS_DATABASE_INSTANCE'
     value: 'your_db_instance_name'
   - name: 'DATABRICKS_DATABASE_NAME'

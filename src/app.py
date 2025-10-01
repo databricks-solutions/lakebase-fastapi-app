@@ -16,6 +16,7 @@ from core.database import (
     init_engine,
     start_token_refresh,
     stop_token_refresh,
+    user_based_auth_enabled,
 )
 
 logging.basicConfig(
@@ -29,20 +30,34 @@ async def lifespan(app: FastAPI):
     """Handle application startup and shutdown events."""
     logger.info("Application startup initiated")
 
+    # Log authentication mode
+    auth_mode = "user-based" if user_based_auth_enabled else "app-level"
+    logger.info(f"Authentication mode: {auth_mode}")
+
     # Check if database exists before initializing
     database_exists = check_database_exists()
     health_check_task = None
 
     if database_exists:
         try:
-            init_engine()
-            from core.database import engine
+            if user_based_auth_enabled:
+                # User-based auth: Skip engine initialization and token refresh
+                # Database connections will be created per-request
+                logger.info("User-based authentication enabled - per-request database connections will be used")
+                logger.info("Database engine will be initialized on first request with user credentials")
+                # Note: Still create health check task using app-level credentials for monitoring
+                # This is acceptable as health checks don't query user data
+                health_check_task = asyncio.create_task(check_database_health(300))
+            else:
+                # App-level auth: Initialize shared engine and start token refresh
+                init_engine()
+                from core.database import engine
 
-            async with engine.begin() as conn:
-                await conn.run_sync(SQLModel.metadata.create_all)
-            await start_token_refresh()
-            health_check_task = asyncio.create_task(check_database_health(300))
-            logger.info("Database engine initialized and health monitoring started")
+                async with engine.begin() as conn:
+                    await conn.run_sync(SQLModel.metadata.create_all)
+                await start_token_refresh()
+                health_check_task = asyncio.create_task(check_database_health(300))
+                logger.info("Database engine initialized and health monitoring started")
         except Exception as e:
             logger.error(f"Failed to initialize database engine: {e}")
             logger.info("Application will start without database functionality")
@@ -65,7 +80,11 @@ async def lifespan(app: FastAPI):
             await health_check_task
         except asyncio.CancelledError:
             logger.info("Database health check task cancelled successfully")
+
+    # Only stop token refresh if using app-level auth
+    if not user_based_auth_enabled:
         await stop_token_refresh()
+
     logger.info("Application shutdown complete")
 
 

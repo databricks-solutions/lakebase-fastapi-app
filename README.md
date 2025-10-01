@@ -158,6 +158,31 @@ src/
 - Optimized for high-traffic production applications
 - Pool connections are recycled every hour preventing expired tokens on long connections
 
+### Authentication Modes
+
+The application supports two authentication modes for database connections:
+
+**App-Level Authentication (Default)**
+- Configuration: `USER_BASED_AUTHENTICATION=false` or omitted from .env
+- Single shared connection pool for all users
+- Uses service principal or app-level credentials
+- Best for: Development, single-user apps, or environments without user-specific access control
+
+**User-Based Authentication**
+- Configuration: `USER_BASED_AUTHENTICATION=true` in .env
+- Per-user database connections using Databricks Apps forwarded headers
+- Each request authenticated as the specific user via X-Forwarded-Access-Token
+- Enables Unity Catalog row-level and column-level security
+- User credentials cached for 45 minutes to minimize API calls
+- Best for: Multi-tenant production apps requiring user-specific access control
+
+When user-based authentication is enabled, the app extracts user information from these Databricks Apps headers:
+- `X-Forwarded-Access-Token`: User's OAuth token
+- `X-Forwarded-Email`: User's email address
+- `X-Forwarded-User`: User identifier
+
+For more details, see [Databricks Apps HTTP Headers](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/http-headers)
+
 ## 📚 API Documentation
 
 ### Core Endpoints

@@ -1,10 +1,10 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_async_db
+from core.database import get_db
 from models.orders import (
     CursorPaginationInfo,
     Order,
@@ -24,7 +24,7 @@ router = APIRouter(tags=["orders"])
 
 
 @router.get("/count", response_model=OrderCount, summary="Get total order count")
-async def get_order_count(db: AsyncSession = Depends(get_async_db)):
+async def get_order_count(request: Request, db: AsyncSession = Depends(get_db)):
     """
     Get the total number of orders in the database.
 
@@ -45,7 +45,7 @@ async def get_order_count(db: AsyncSession = Depends(get_async_db)):
 
 
 @router.get("/sample", response_model=OrderSample, summary="Get 5 random order keys")
-async def get_sample_orders(db: AsyncSession = Depends(get_async_db)):
+async def get_sample_orders(request: Request, db: AsyncSession = Depends(get_db)):
     """
     Get 5 sample order keys for testing and development purposes.
 
@@ -71,6 +71,7 @@ async def get_sample_orders(db: AsyncSession = Depends(get_async_db)):
     summary="Get orders with page-based pagination",
 )
 async def get_orders_by_page(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     page_size: int = Query(
         100, ge=1, le=1000, description="Number of records per page (max 1000)"
@@ -78,7 +79,7 @@ async def get_orders_by_page(
     include_count: bool = Query(
         True, description="Include total count for pagination info"
     ),
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get orders using traditional page-based pagination.
@@ -183,13 +184,14 @@ async def get_orders_by_page(
     summary="Get orders with cursor-based pagination",
 )
 async def get_orders_by_cursor(
+    request: Request,
     cursor: int = Query(
         0, ge=0, description="Start after this order key (0 for beginning)"
     ),
     page_size: int = Query(
         100, ge=1, le=1000, description="Number of records to fetch (max 1000)"
     ),
-    db: AsyncSession = Depends(get_async_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get orders using efficient cursor-based pagination.
@@ -275,7 +277,7 @@ async def get_orders_by_cursor(
 
 
 @router.get("/{order_key}", response_model=OrderRead, summary="Get an order by its key")
-async def read_order(order_key: int, db: AsyncSession = Depends(get_async_db)):
+async def read_order(order_key: int, request: Request, db: AsyncSession = Depends(get_db)):
     """
     Fetch a single order by its key, returning all order fields.
 
@@ -320,7 +322,8 @@ async def read_order(order_key: int, db: AsyncSession = Depends(get_async_db)):
 async def update_order_status(
     order_key: int,
     status_data: OrderStatusUpdate,
-    db: AsyncSession = Depends(get_async_db),
+    request: Request,
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Update the status for a specific order.
