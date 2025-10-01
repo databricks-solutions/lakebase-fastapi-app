@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from core.database import check_database_exists
+from src.core.database import check_database_exists
 
 # Import router factory from versioned packages
 from .v1 import create_router

@@ -6,7 +6,6 @@ import uuid
 from typing import AsyncGenerator
 
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.core import Config
 from dotenv import load_dotenv
 from fastapi import Request
 from sqlalchemy import URL, event, text
@@ -210,9 +209,14 @@ async def generate_user_db_credentials(user_token: str, user_email: str) -> dict
         return cached
 
     try:
-        # Create WorkspaceClient with user's token
-        config = Config(token=user_token)
-        user_workspace_client = WorkspaceClient(config=config)
+        # Create WorkspaceClient with user's token using PAT auth type
+        # auth_type="pat" forces SDK to use ONLY the token and ignore env vars
+        workspace_host = os.getenv("DATABRICKS_HOST")
+        user_workspace_client = WorkspaceClient(
+            host=workspace_host,
+            token=user_token,
+            auth_type="pat"
+        )
 
         # Get database instance if not already loaded
         if database_instance is None:
@@ -321,30 +325,25 @@ async def get_user_async_db(request: Request) -> AsyncGenerator[AsyncSession, No
         await user_engine.dispose()
 
 
-async def get_db(request: Request | None = None) -> AsyncGenerator[AsyncSession, None]:
+async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     """
     Smart database dependency that automatically selects authentication mode.
 
     If USER_BASED_AUTHENTICATION=true:
         - Uses per-user authentication with X-Forwarded-* headers
-        - Requires Request parameter to extract user info
+        - Extracts user info from Request
 
     If USER_BASED_AUTHENTICATION=false (default):
         - Uses app-level shared authentication
-        - Request parameter is optional and ignored
+        - Request parameter is ignored
 
     Args:
-        request: FastAPI Request object (required for user-based auth)
+        request: FastAPI Request object (automatically injected by FastAPI)
 
     Yields:
         AsyncSession with appropriate authentication
     """
     if user_based_auth_enabled:
-        if request is None:
-            raise RuntimeError(
-                "Request parameter required for user-based authentication. "
-                "Update endpoint to: db = Depends(get_db), request: Request"
-            )
         async for session in get_user_async_db(request):
             yield session
     else:

@@ -1,4 +1,4 @@
-command: ["uvicorn", "src.main:app"]
+command: ["uvicorn", "src.app:app"]
 
 env:
 # Authentication Mode
@@ -6,11 +6,17 @@ env:
 # Set to 'false' for app-level authentication (default)
   - name: 'USER_BASED_AUTHENTICATION'
     value: 'false'
-    
-  - name: 'DATABRICKS_DATABASE_INSTANCE'
-    value: 'your_db_instance_name'
-  - name: 'DATABRICKS_DATABASE_NAME'
-    value: 'your_database_name'
+
+  - name: 'LAKEBASE_INSTANCE_NAME'
+    value: 'gdoyle-fastapi-demo'
+  - name: 'LAKEBASE_DATABASE_NAME'
+    value: 'gdoyle-database'
+  - name: 'LAKEBASE_CATALOG_NAME'
+    value: 'gdd-lakebase-catalog'
+  - name: 'SYNCHED_TABLE_STORAGE_CATALOG'
+    value: 'grant_doyle'
+  - name: 'SYNCHED_TABLE_STORAGE_SCHEMA'
+    value: 'lakebase_sme_demo'
   - name: 'DATABRICKS_DATABASE_PORT'
     value: '5432'
 
@@ -27,5 +33,3 @@ env:
     value: '30'
   - name: 'DB_POOL_TIMEOUT'
     value: '10'
-  - name: 'DB_POOL_RECYCLE_INTERVAL'
-    value: '3600'
