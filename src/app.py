@@ -12,6 +12,7 @@ from .routers import api_router
 
 from .core.database import (
     check_database_exists,
+    cleanup_user_engines,
     database_health,
     init_engine,
     start_token_refresh,
@@ -66,6 +67,10 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             logger.info("Database health check task cancelled successfully")
         await stop_token_refresh()
+
+    # Cleanup user-based database engines
+    await cleanup_user_engines()
+
     logger.info("Application shutdown complete")
 
 

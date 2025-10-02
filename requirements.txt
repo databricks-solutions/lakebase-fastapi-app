@@ -3,7 +3,7 @@ uvicorn>=0.23.0
 pydantic>=2.1.0
 pydantic-settings>=2.0.0
 httpx>=0.24.1
-databricks-sdk>=0.61.0
+databricks-sdk>=0.67.0
 databricks-sql-connector==4.0.2
 annotated-types==0.7.0
 anyio==4.9.0

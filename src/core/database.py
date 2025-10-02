@@ -7,9 +7,12 @@ from typing import AsyncGenerator
 
 from databricks.sdk import WorkspaceClient
 from dotenv import load_dotenv
+from fastapi import Request
 from sqlalchemy import URL, event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+
+from .auth import get_or_create_user_credentials
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -20,10 +23,14 @@ AsyncSessionLocal: sessionmaker | None = None
 workspace_client: WorkspaceClient | None = None
 database_instance = None
 
-# Token management for background refresh
+# Token management for background refresh (service principal mode)
 postgres_password: str | None = None
 last_password_refresh: float = 0
 token_refresh_task: asyncio.Task | None = None
+
+# User-based session management
+_user_session_makers: dict[str, sessionmaker] = {}
+_user_engines: dict[str, AsyncEngine] = {}
 
 
 async def refresh_token_background():
@@ -200,3 +207,106 @@ async def database_health() -> bool:
     except Exception as e:
         logger.error("Database health check failed: %s", e)
         return False
+
+
+async def get_user_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """
+    Get a database session using user-based authentication.
+
+    This function:
+    1. Extracts user credentials from Databricks Apps headers
+    2. Creates/retrieves a per-user database engine with user credentials
+    3. Provides a session for the request
+
+    Args:
+        request: FastAPI request object containing user headers
+
+    Yields:
+        AsyncSession: Database session authenticated as the requesting user
+    """
+    global _user_session_makers, _user_engines, database_instance
+
+    # Get instance name
+    instance_name = os.getenv("LAKEBASE_INSTANCE_NAME")
+    if not instance_name:
+        raise RuntimeError("LAKEBASE_INSTANCE_NAME environment variable is required")
+
+    # Get or create user credentials
+    user_creds = get_or_create_user_credentials(request, instance_name)
+    user_email = user_creds.email
+
+    # Check if we need to create/refresh the user's engine
+    if user_email not in _user_session_makers or user_creds.is_token_expired():
+        logger.info(f"Creating/refreshing database engine for user: {user_email}")
+
+        # Get database instance info (use cached if available, otherwise fetch)
+        if database_instance is None:
+            # Use user's workspace client to get instance info
+            db_instance = user_creds.workspace_client.database.get_database_instance(
+                name=instance_name
+            )
+        else:
+            db_instance = database_instance
+
+        database_name = os.getenv("LAKEBASE_DATABASE_NAME", instance_name)
+
+        # Create URL with user credentials
+        url = URL.create(
+            drivername="postgresql+asyncpg",
+            username=user_email,
+            password=user_creds.db_oauth_token,
+            host=db_instance.read_write_dns,
+            port=int(os.getenv("DATABRICKS_DATABASE_PORT", "5432")),
+            database=database_name,
+        )
+
+        # Create user-specific engine with smaller pool
+        user_engine = create_async_engine(
+            url,
+            pool_pre_ping=False,
+            echo=False,
+            pool_size=2,  # Smaller pool per user
+            max_overflow=3,
+            pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
+            pool_recycle=int(os.getenv("DB_POOL_RECYCLE_INTERVAL", "3600")),
+            connect_args={
+                "command_timeout": int(os.getenv("DB_COMMAND_TIMEOUT", "10")),
+                "server_settings": {
+                    "application_name": f"fastapi_user_{user_email}",
+                },
+                "ssl": "require",
+            },
+        )
+
+        # Store engine and create session maker
+        _user_engines[user_email] = user_engine
+        _user_session_makers[user_email] = sessionmaker(
+            bind=user_engine, class_=AsyncSession, expire_on_commit=False
+        )
+        logger.info(f"Created database engine for user: {user_email}")
+
+    # Get session from user's session maker
+    session_maker = _user_session_makers[user_email]
+    async with session_maker() as session:
+        yield session
+
+
+async def cleanup_user_engines():
+    """
+    Cleanup all user-specific database engines.
+    Should be called during application shutdown.
+    """
+    global _user_engines, _user_session_makers
+
+    logger.info(f"Cleaning up {len(_user_engines)} user database engines")
+
+    for email, engine in _user_engines.items():
+        try:
+            await engine.dispose()
+            logger.debug(f"Disposed engine for user: {email}")
+        except Exception as e:
+            logger.error(f"Error disposing engine for user {email}: {e}")
+
+    _user_engines.clear()
+    _user_session_makers.clear()
+    logger.info("All user database engines cleaned up")

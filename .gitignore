@@ -28,6 +28,7 @@ share/python-wheels/
 MANIFEST
 uv.lock
 .python-version
+quick-test.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

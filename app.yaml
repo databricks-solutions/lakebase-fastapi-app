@@ -1,4 +1,4 @@
-command: ["uvicorn", "src.main:app"]
+command: ["uvicorn", "src.app:app"]
 
 env:
   - name: 'USER_BASED_AUTHENTICATION'
