@@ -30,3 +30,4 @@ env:
     value: '10'
   - name: 'DB_POOL_RECYCLE_INTERVAL'
     value: '3600'
+    
