@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_async_db
-from models.orders import (
+from ...core.database import get_async_db
+from ...models.orders import (
     CursorPaginationInfo,
     Order,
     OrderCount,

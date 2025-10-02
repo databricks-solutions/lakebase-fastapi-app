@@ -8,9 +8,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError
 from sqlmodel import SQLModel
 
-from routers import api_router
+from .routers import api_router
 
-from core.database import (
+from .core.database import (
     check_database_exists,
     database_health,
     init_engine,
