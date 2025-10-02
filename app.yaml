@@ -1,10 +1,17 @@
-command: ["uvicorn", "src.main:app"]
+command: ["uvicorn", "src.app:app"]
 
 env:
-  - name: 'DATABRICKS_DATABASE_INSTANCE'
+  - name: 'LAKEBASE_INSTANCE_NAME'
     value: 'your_db_instance_name'
-  - name: 'DATABRICKS_DATABASE_NAME'
+  - name: 'LAKEBASE_DATABASE_NAME'
     value: 'your_database_name'
+  - name: 'LAKEBASE_CATALOG_NAME'
+    value: 'your_database_name'
+  - name: 'SYNCHED_TABLE_STORAGE_CATALOG'
+    value: 'your_database_name'
+  - name: 'SYNCHED_TABLE_STORAGE_SCHEMA'
+    value: 'your_database_name'
+
   - name: 'DATABRICKS_DATABASE_PORT'
     value: '5432'
 
