@@ -1,12 +1,32 @@
-# bundle:
-#   name: databricks_app
+bundle:
+  name: lakebase-fastapi-app
 
-# include:
-#   - resources/*.yml
+resources:
+  postgres_projects:
+    my_db:
+      project_id: lakebase-fastapi-app
+      display_name: 'lakebase-fastapi-db'
+      pg_version: 17
+      default_endpoint_settings:
+        autoscaling_limit_min_cu: 0.5
+        autoscaling_limit_max_cu: 4
+        suspend_timeout_duration: 300s
 
+  postgres_branches:
+    main:
+      parent: ${resources.postgres_projects.my_db.id}
+      branch_id: main
+      is_protected: false
+      no_expiry: true
 
-# #workspace:
-# #  host: https://myworkspace.databricks.com
+  postgres_endpoints:
+    primary:
+      parent: ${resources.postgres_branches.main.id}
+      endpoint_id: primary
+      endpoint_type: ENDPOINT_TYPE_READ_WRITE
+      autoscaling_limit_min_cu: 0.5
+      autoscaling_limit_max_cu: 4
+      suspend_timeout_duration: 300s
 
 targets:
   dev:
