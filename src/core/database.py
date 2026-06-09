@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import time
-import uuid
 from typing import AsyncGenerator
 
 from databricks.sdk import WorkspaceClient
@@ -18,7 +17,8 @@ logger = logging.getLogger(__name__)
 engine: AsyncEngine | None = None
 AsyncSessionLocal: sessionmaker | None = None
 workspace_client: WorkspaceClient | None = None
-database_instance = None
+# Full endpoint resource path, e.g. projects/<id>/branches/<branch>/endpoints/<endpoint>
+database_endpoint_name: str | None = None
 
 # Token management for background refresh
 postgres_password: str | None = None
@@ -28,7 +28,7 @@ token_refresh_task: asyncio.Task | None = None
 
 async def refresh_token_background():
     """Background task to refresh tokens every 50 minutes"""
-    global postgres_password, last_password_refresh, workspace_client, database_instance
+    global postgres_password, last_password_refresh, workspace_client, database_endpoint_name
 
     while True:
         try:
@@ -37,9 +37,8 @@ async def refresh_token_background():
                 "Background token refresh: Generating fresh PostgreSQL OAuth token"
             )
 
-            cred = workspace_client.database.generate_database_credential(
-                request_id=str(uuid.uuid4()),
-                instance_names=[database_instance.name],
+            cred = workspace_client.postgres.generate_database_credential(
+                endpoint=database_endpoint_name,
             )
             postgres_password = cred.token
             last_password_refresh = time.time()
@@ -55,33 +54,40 @@ def init_engine():
         engine, \
         AsyncSessionLocal, \
         workspace_client, \
-        database_instance, \
+        database_endpoint_name, \
         postgres_password, \
         last_password_refresh
 
     try:
         workspace_client = WorkspaceClient()
 
-        instance_name = os.getenv("LAKEBASE_INSTANCE_NAME")
-        if not instance_name:
+        project_id = os.getenv("LAKEBASE_PROJECT_ID")
+        if not project_id:
             raise RuntimeError(
-                "LAKEBASE_INSTANCE_NAME environment variable is required"
+                "LAKEBASE_PROJECT_ID environment variable is required"
             )
 
-        database_instance = workspace_client.database.get_database_instance(
-            name=instance_name
+        # Autoscaling Lakebase: connect via the endpoint's host, not the
+        # provisioned database-instance API.
+        branch = os.getenv("LAKEBASE_BRANCH", "main")
+        endpoint_id = os.getenv("LAKEBASE_ENDPOINT", "primary")
+        database_endpoint_name = (
+            f"projects/{project_id}/branches/{branch}/endpoints/{endpoint_id}"
         )
 
-        # Generate initial credentials
-        cred = workspace_client.database.generate_database_credential(
-            request_id=str(uuid.uuid4()), instance_names=[database_instance.name]
+        endpoint = workspace_client.postgres.get_endpoint(name=database_endpoint_name)
+        host = endpoint.status.hosts.host
+
+        # Generate initial credentials (OAuth token used as the Postgres password)
+        cred = workspace_client.postgres.generate_database_credential(
+            endpoint=database_endpoint_name
         )
         postgres_password = cred.token
         last_password_refresh = time.time()
         logger.info("Database: Initial credentials generated")
 
         # Create Engine
-        database_name = os.getenv("LAKEBASE_DATABASE_NAME", database_instance.name)
+        database_name = os.getenv("LAKEBASE_DATABASE_NAME", "databricks_postgres")
         username = (
             os.getenv("DATABRICKS_CLIENT_ID")
             or workspace_client.current_user.me().user_name
@@ -92,7 +98,7 @@ def init_engine():
             drivername="postgresql+asyncpg",
             username=username,
             password="",  # Will be set by event handler
-            host=database_instance.read_write_dns,
+            host=host,
             port=int(os.getenv("DATABRICKS_DATABASE_PORT", "5432")),
             database=database_name,
         )
@@ -163,25 +169,25 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 def check_database_exists() -> bool:
-    """Check if the Lakebase database instance exists"""
+    """Check if the Lakebase autoscaling project exists"""
+    project_id = os.getenv("LAKEBASE_PROJECT_ID")
     try:
         workspace_client = WorkspaceClient()
-        instance_name = os.getenv("LAKEBASE_INSTANCE_NAME")
 
-        if not instance_name:
+        if not project_id:
             logger.warning(
-                "LAKEBASE_INSTANCE_NAME not set - database instance check skipped"
+                "LAKEBASE_PROJECT_ID not set - project check skipped"
             )
             return False
 
-        workspace_client.database.get_database_instance(name=instance_name)
-        logger.info(f"Lakebase database instance '{instance_name}' exists")
+        workspace_client.postgres.get_project(name=f"projects/{project_id}")
+        logger.info(f"Lakebase project '{project_id}' exists")
         return True
     except Exception as e:
         if "not found" in str(e).lower() or "resource not found" in str(e).lower():
-            logger.info(f"Lakebase database instance '{instance_name}' does not exist")
+            logger.info(f"Lakebase project '{project_id}' does not exist")
         else:
-            logger.error(f"Error checking database instance existence: {e}")
+            logger.error(f"Error checking project existence: {e}")
         return False
 
 
