@@ -1,16 +1,27 @@
-command: ["uvicorn", "src.app:app"]
-
+command:
+  - uv
+  - run
+  - uvicorn
+  - src.app:app
+  
 env:
-  - name: 'LAKEBASE_INSTANCE_NAME'
-    value: 'your_db_instance_name'
+  # Lakebase (autoscaling Postgres) — values match the resources the bundle creates
+  # (databricks.yml) / the Swagger route. app.yaml can't reference bundle ${resources},
+  # so keep these literals in sync with databricks.yml if you change project/catalog.
+  - name: 'LAKEBASE_PROJECT_ID'
+    value: 'lakebase-fastapi-app-db'
+  - name: 'LAKEBASE_BRANCH'
+    value: 'production'
   - name: 'LAKEBASE_DATABASE_NAME'
-    value: 'your_database_name'
+    value: 'databricks_postgres'
   - name: 'LAKEBASE_CATALOG_NAME'
-    value: 'your_database_name'
-  - name: 'SYNCHED_TABLE_STORAGE_CATALOG'
-    value: 'your_database_name'
-  - name: 'SYNCHED_TABLE_STORAGE_SCHEMA'
-    value: 'your_database_name'
+    value: 'lakebase-fastapi-app-catalog'
+
+  # Synced table pipeline checkpoint storage (writable catalog.schema)
+  - name: 'SYNCED_TABLE_STORAGE_CATALOG'
+    value: 'mfg_lb_epl'
+  - name: 'SYNCED_TABLE_STORAGE_SCHEMA'
+    value: 'demo'
 
   - name: 'DATABRICKS_DATABASE_PORT'
     value: '5432'
@@ -30,4 +41,3 @@ env:
     value: '10'
   - name: 'DB_POOL_RECYCLE_INTERVAL'
     value: '3600'
-    

@@ -57,7 +57,7 @@ Learn more about Databricks Lakebase [here](https://docs.databricks.com/aws/en/o
 
 3. **Run the application:**
    ```bash
-   uv run uvicorn src.main:app --reload
+   uv run uvicorn src.app:app --reload
    ```
 
 4. **Access the API:**
@@ -101,11 +101,11 @@ Learn more about Databricks Lakebase [here](https://docs.databricks.com/aws/en/o
 
    | Variable | Description | Example |
    |----------|-------------|---------|
-   | `LAKEBASE_INSTANCE_NAME` | Lakebase database instance name | `my-lakebase-instance` |
-   | `LAKEBASE_DATABASE_NAME` | Lakebase database name | `demo-database` |
-   | `LAKEBASE_CATALOG_NAME` | Lakebase catalog name | `my-lakebase-catalog` |
-   | `SYNCHED_TABLE_STORAGE_CATALOG` | Catalog for synced table metadata | `my_catalog` |
-   | `SYNCHED_TABLE_STORAGE_SCHEMA` | Schema for synced table metadata | `my_schema` |
+   | `LAKEBASE_PROJECT_ID` | Lakebase autoscaling project ID (`project_id`) | `my-lakebase-demo` |
+   | `LAKEBASE_DATABASE_NAME` | Lakebase Postgres database name | `databricks_postgres` |
+   | `LAKEBASE_CATALOG_NAME` | UC catalog backed by the Postgres database | `my-lakebase-catalog` |
+   | `SYNCED_TABLE_STORAGE_CATALOG` | Synced table pipeline storage catalog (`storage_catalog`) | `my_catalog` |
+   | `SYNCED_TABLE_STORAGE_SCHEMA` | Synced table pipeline storage schema (`storage_schema`) | `my_schema` |
    | `DATABRICKS_DATABASE_PORT` | Postgres Port | `5432` |
    | `DEFAULT_POSTGRES_SCHEMA` | Database schema | `public` |
    | `DEFAULT_POSTGRES_TABLE` | Table name | `orders_synced` |

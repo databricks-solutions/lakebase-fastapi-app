@@ -29,7 +29,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 uv.lock
-.python-version
+# .python-version is intentionally tracked so the Databricks App build pins Python 3.13
+# (pydantic-core==2.33.2 has no 3.14 wheel and fails to build from source on 3.14).
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

@@ -1,10 +1,33 @@
 bundle:
   name: lakebase-fastapi-app
 
+# These variables let `databricks bundle deploy` create the SAME resources the
+# Swagger endpoint (/resources/create-lakebase-resources) creates at runtime.
+# Override per target or with --var.
+variables:
+  pg_database:
+    description: Postgres database name (Lakebase default is databricks_postgres)
+    default: databricks_postgres
+  catalog_name:
+    description: >-
+      Postgres-backed UC catalog this bundle creates. It mirrors the Postgres DB,
+      so it has a `public` schema. Must be unique per project (catalogs are
+      project-bound) and is NOT a pre-existing regular catalog.
+    default: lakebase-fastapi-app-catalog
+  source_table:
+    description: UC source table synced into Lakebase Postgres
+    default: samples.tpch.orders
+  pipeline_storage_catalog:
+    description: Catalog for the sync pipeline's checkpoint storage (a writable, pre-existing catalog)
+    default: mfg_lb_epl
+  pipeline_storage_schema:
+    description: Schema for the sync pipeline's checkpoint storage
+    default: demo
+
 resources:
   postgres_projects:
     my_db:
-      project_id: lakebase-fastapi-app
+      project_id: lakebase-fastapi-app-db
       display_name: 'lakebase-fastapi-db'
       pg_version: 17
       default_endpoint_settings:
@@ -13,22 +36,68 @@ resources:
         suspend_timeout_duration: 300s
 
   postgres_branches:
-    main:
+    production:
       parent: ${resources.postgres_projects.my_db.id}
-      branch_id: main
+      branch_id: production
       is_protected: false
       no_expiry: true
+      replace_existing: true
 
   postgres_endpoints:
     primary:
-      parent: ${resources.postgres_branches.main.id}
+      parent: ${resources.postgres_branches.production.id}
       endpoint_id: primary
       endpoint_type: ENDPOINT_TYPE_READ_WRITE
       autoscaling_limit_min_cu: 0.5
       autoscaling_limit_max_cu: 4
       suspend_timeout_duration: 300s
+      replace_existing: true
+
+  # UC catalog backed by the Postgres database (mirrors it, so it has a `public` schema)
+  postgres_catalogs:
+    pg_catalog:
+      branch: ${resources.postgres_branches.production.id}
+      catalog_id: ${var.catalog_name}
+      postgres_database: ${var.pg_database}
+      create_database_if_missing: true
+
+  # Synced table: samples.tpch.orders -> Postgres public.orders_synced
+  postgres_synced_tables:
+    orders_synced:
+      branch: ${resources.postgres_branches.production.id}
+      synced_table_id: ${resources.postgres_catalogs.pg_catalog.catalog_id}.public.orders_synced
+      postgres_database: ${var.pg_database}
+      source_table_full_name: ${var.source_table}
+      primary_key_columns:
+        - o_orderkey
+      timeseries_key: o_orderdate
+      scheduling_policy: SNAPSHOT
+      create_database_objects_if_missing: true
+      new_pipeline_spec:
+        storage_catalog: ${var.pipeline_storage_catalog}
+        storage_schema: ${var.pipeline_storage_schema}
+
+  # The FastAPI app, bound to the Lakebase Postgres database created above.
+  apps:
+    lakebase_fastapi_app:
+      name: lakebase-fastapi-app
+      description: FastAPI app serving the synced orders table from Lakebase Postgres
+      source_code_path: .
+      resources:
+        - name: lakebase-db
+          postgres:
+            branch: ${resources.postgres_branches.production.id}
+            # The app binding needs the database RESOURCE ID (hyphenated default
+            # `databricks-postgres`), which differs from the PG name used elsewhere
+            # (var.pg_database = databricks_postgres). The default DB is auto-created
+            # with the branch, so no create step is needed.
+            database: ${resources.postgres_branches.production.id}/databases/databricks-postgres
+            permission: CAN_CONNECT_AND_CREATE
+      # command + env come from app.yaml (required by the Databricks Apps runtime).
 
 targets:
   dev:
     default: true
     mode: development
+    # git:
+    #   branch: master
