@@ -37,36 +37,51 @@ Learn more about Databricks Lakebase [here](https://docs.databricks.com/aws/en/o
 
 ## 🚀 Quick Start
 
-### Deploy everything with the bundle (recommended)
-Provisioning is owned by the bundle — there are no runtime "create resource" endpoints.
+### Deploy as a Databricks App (recommended)
+Provisioning is owned by the bundle — there are no runtime "create resource" endpoints, and you don't edit `app.yaml` or `.env` to deploy.
 
-1. **Clone:**
+1. **Clone & authenticate:**
    ```bash
    git clone https://github.com/databricks-solutions/lakebase-fastapi-app.git
    cd lakebase-fastapi-app
+   databricks auth login   # profile must be able to create Lakebase projects + apps
    ```
-2. **Configure** `databricks.yml` variables and `app.yaml` env for your workspace. In particular set the **sync pipeline storage** to a catalog/schema you can write to:
+2. **Set the three bundle variables** for your workspace (edit the `variables:` defaults in `databricks.yml`, or pass `--var` at deploy):
+
+   | Variable | What to set it to |
+   |----------|-------------------|
+   | `project_name` | A Lakebase project id, unique per deployment (the single place the name lives) |
+   | `pipeline_storage_catalog` | A UC catalog **you can write to** (holds the sync pipeline's checkpoints) |
+   | `pipeline_storage_schema` | A schema in that catalog |
+
+3. **Deploy:**
    ```bash
    databricks bundle deploy -t dev \
-     --var="pipeline_storage_catalog=<your_catalog>" \
-     --var="pipeline_storage_schema=<your_schema>"
+     --var="project_name=my-lakebase-app" \
+     --var="pipeline_storage_catalog=my_catalog" \
+     --var="pipeline_storage_schema=my_schema"
    ```
-   The deploy creates the Lakebase project/branch/endpoint/catalog/synced table, deploys the app, and the `postdeploy` hook ([`scripts/grant_app_access.py`](scripts/grant_app_access.py)) grants the app's service principal `USAGE` + `SELECT` on the synced table — run as you (the project creator/superuser), so **no manual permission step is required**.
-3. **Open the app** (`<your_app_url>/docs`). The `/api/v1` order endpoints serve the synced data.
-4. **Tear down** when finished:
+   This creates the Lakebase project/branch/endpoint/catalog/synced table, deploys the app, and the `postdeploy` hook ([`scripts/grant_app_access.py`](scripts/grant_app_access.py)) grants the app's service principal least-privilege `USAGE` + `SELECT` on the synced table — run as you (the project creator/superuser), so **no manual permission step is required**.
+4. **Open the app** (`<your_app_url>/docs`). The `/api/v1` endpoints serve the synced data. (They return **`503`** until the first sync provisions the table.)
+5. **Tear down** when finished:
    ```bash
    databricks bundle destroy -t dev
    ```
+
+> **Why so little config?** The app's database resource binding auto-injects the connection (`PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER`/`PGSSLMODE`), and `ENDPOINT_NAME` is injected from the bundle (`config.env`). So **no project/db names live in `app.yaml`** — change the name with one `--var project_name=...`.
 
 ### Local development
 1. **Install dependencies:**
    ```bash
    uv sync
    ```
-2. **Configure environment variables:**
+2. **Configure the one connection identifier:**
    ```bash
    cp .env.example .env
-   # Edit .env with your Lakebase project/branch/endpoint/database values
+   ```
+   Set `ENDPOINT_NAME` to your deployed project's endpoint (the app derives host/user/database from it):
+   ```
+   ENDPOINT_NAME=projects/<your-project>/branches/production/endpoints/primary
    ```
 3. **Run the application:**
    ```bash
@@ -76,25 +91,34 @@ Provisioning is owned by the bundle — there are no runtime "create resource" e
    - API: `http://localhost:8000`
    - Interactive docs: `http://localhost:8000/docs`
 
-> Locally you connect as **your own identity** (a project superuser), so the order endpoints work against the synced table as soon as it exists. Data endpoints return **`503`** until the engine connects to Lakebase — there is no longer a restart step or a conditional/dynamic endpoint registration.
+> Locally you connect as **your own identity** (a project superuser) using your CLI profile, so the order endpoints work against the synced table as soon as it exists. Data endpoints return **`503`** until the engine connects — there's no restart step or conditional endpoint registration.
 
 ## ⚙️ Configuration
 
-### App runtime environment (`.env` for local, `app.yaml` for deployment)
+### Deployment — bundle variables (`databricks.yml`)
+The single source of truth for a deployment. Override with `--var` or edit the defaults:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `project_name` | Lakebase project id (and display name) — **the one place** to change the name | `lakebase-fastapi-app-db` |
+| `catalog_name` | Postgres-backed UC catalog the bundle creates (unique per project) | `lakebase-fastapi-app-catalog` |
+| `pg_database` | Postgres database name | `databricks_postgres` |
+| `source_table` | UC source table to sync | `samples.tpch.orders` |
+| `pipeline_storage_catalog` | Writable catalog for sync-pipeline checkpoints | `your_storage_catalog` |
+| `pipeline_storage_schema` | Writable schema for sync-pipeline checkpoints | `your_storage_schema` |
+
+> When deployed, the app's DB binding auto-injects `PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER`/`PGSSLMODE`, and `ENDPOINT_NAME` is injected via the app's `config.env` (derived from the endpoint resource). `PGUSER` = the app's `DATABRICKS_CLIENT_ID` (its Postgres role). **No project/db names are set in `app.yaml`.**
+
+### Local development (`.env`)
+Local runs don't get the injected `PG*`, so set the one endpoint identifier (plus the synced-table location used by the grant script):
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `LAKEBASE_PROJECT_ID` | Lakebase autoscaling project id | `lakebase-fastapi-app-db` |
-| `LAKEBASE_BRANCH` | Branch holding the endpoint + synced table | `production` |
-| `LAKEBASE_ENDPOINT` | Read-write endpoint id on the branch | `primary` |
-| `LAKEBASE_DATABASE_NAME` | Postgres database name | `databricks_postgres` |
-| `DATABRICKS_DATABASE_PORT` | Postgres port | `5432` |
-| `DEFAULT_POSTGRES_SCHEMA` | Schema the synced table lands in | `public` |
-| `DEFAULT_POSTGRES_TABLE` | Synced table name | `orders_synced` |
+| `ENDPOINT_NAME` | Lakebase endpoint resource path — the app derives host/user/database from it | `projects/<p>/branches/production/endpoints/primary` |
+| `DEFAULT_POSTGRES_SCHEMA` | Synced-table schema (also read by the post-deploy grant script) | `public` |
+| `DEFAULT_POSTGRES_TABLE` | Synced-table name (also read by the post-deploy grant script) | `orders_synced` |
 
-> In a deployed Databricks App, `DATABRICKS_CLIENT_ID` is injected automatically as the app's service principal and is used both for OAuth and as the Postgres role name. The catalog name, source table, and sync pipeline storage are **bundle** configuration (`databricks.yml` variables), not app runtime env.
-
-### Optional connection-pool tuning
+### Optional connection-pool tuning (`app.yaml` env, or `.env` locally)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
