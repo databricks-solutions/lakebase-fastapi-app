@@ -5,34 +5,23 @@ command:
   - "0.0.0.0"
   - --workers
   - "2"
-  
+
 env:
-  # Lakebase (autoscaling Postgres) — values match the resources the bundle creates
-  # (databricks.yml) / the Swagger route. app.yaml can't reference bundle ${resources},
-  # so keep these literals in sync with databricks.yml if you change project/catalog.
+  # Lakebase (autoscaling Postgres) connection — the app reads these at runtime.
+  # app.yaml can't reference bundle ${resources}, so keep LAKEBASE_PROJECT_ID /
+  # LAKEBASE_BRANCH in sync with databricks.yml.
   - name: 'LAKEBASE_PROJECT_ID'
     value: 'lakebase-fastapi-app-db'
   - name: 'LAKEBASE_BRANCH'
     value: 'production'
+  - name: 'LAKEBASE_ENDPOINT'
+    value: 'primary'
   - name: 'LAKEBASE_DATABASE_NAME'
     value: 'databricks_postgres'
-  - name: 'LAKEBASE_CATALOG_NAME'
-    value: 'lakebase-fastapi-app-catalog'
-
-  # Synced table pipeline checkpoint storage (set to a catalog.schema you can write to)
-  - name: 'SYNCED_TABLE_STORAGE_CATALOG'
-    value: 'your_storage_catalog'
-  - name: 'SYNCED_TABLE_STORAGE_SCHEMA'
-    value: 'your_storage_schema'
-
   - name: 'DATABRICKS_DATABASE_PORT'
     value: '5432'
 
-  - name: 'DEFAULT_POSTGRES_SCHEMA'
-    value: 'public'
-  - name: 'DEFAULT_POSTGRES_TABLE'
-    value: 'orders_synced'
-
+  # Connection pool tuning
   - name: 'DB_POOL_SIZE'
     value: '5'
   - name: 'DB_MAX_OVERFLOW'
@@ -42,4 +31,4 @@ env:
   - name: 'DB_POOL_TIMEOUT'
     value: '10'
   - name: 'DB_POOL_RECYCLE_INTERVAL'
-    value: '3600'
+    value: '2700'

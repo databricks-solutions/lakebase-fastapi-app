@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.database import get_async_db
+from ...core.database import get_async_db, require_db
 from ...models.orders import (
     CursorPaginationInfo,
     Order,
@@ -13,14 +13,13 @@ from ...models.orders import (
     OrderListResponse,
     OrderRead,
     OrderSample,
-    OrderStatusUpdate,
-    OrderStatusUpdateResponse,
     PaginationInfo,
 )
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["orders"])
+# All data endpoints require an initialized DB engine (503 until then).
+router = APIRouter(tags=["orders"], dependencies=[Depends(require_db)])
 
 
 @router.get("/count", response_model=OrderCount, summary="Get total order count")
@@ -310,62 +309,3 @@ async def read_order(order_key: int, db: AsyncSession = Depends(get_async_db)):
     except Exception as e:
         logger.error(f"Unexpected error fetching order {order_key}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error occurred")
-
-
-@router.post(
-    "/{order_key}/status",
-    response_model=OrderStatusUpdateResponse,
-    summary="Update order status",
-)
-async def update_order_status(
-    order_key: int,
-    status_data: OrderStatusUpdate,
-    db: AsyncSession = Depends(get_async_db),
-):
-    """
-    Update the status for a specific order.
-
-    Args:
-        order_key: The key of the order to update
-        status_data: The new order status data
-        db: Database session
-
-    Returns:
-        OrderStatusUpdateResponse: Confirmation of the status update
-
-    Raises:
-        HTTPException: 400 for invalid order key, 404 if order not found, 500 for database errors
-    """
-    try:
-        if order_key <= 0:
-            raise HTTPException(status_code=400, detail="Invalid order key provided")
-
-        check_stmt = select(Order).where(Order.o_orderkey == order_key)
-        check_result = await db.execute(check_stmt)
-        existing_order = check_result.scalars().first()
-
-        if not existing_order:
-            logger.info(f"Order not found for update: {order_key}")
-            raise HTTPException(
-                status_code=404, detail=f"Order with key '{order_key}' not found"
-            )
-
-        existing_order.o_orderstatus = status_data.o_orderstatus
-        await db.commit()
-        await db.refresh(existing_order)
-
-        logger.info(
-            f"Successfully updated order {order_key} status to {status_data.o_orderstatus}"
-        )
-
-        return OrderStatusUpdateResponse(
-            o_orderkey=order_key,
-            o_orderstatus=status_data.o_orderstatus,
-            message="Order status updated successfully",
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating status for order {order_key}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update order status")
