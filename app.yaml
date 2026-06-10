@@ -1,8 +1,10 @@
 command:
-  - uv
-  - run
   - uvicorn
   - src.app:app
+  - --host
+  - "0.0.0.0"
+  - --workers
+  - "2"
   
 env:
   # Lakebase (autoscaling Postgres) — values match the resources the bundle creates
@@ -17,11 +19,11 @@ env:
   - name: 'LAKEBASE_CATALOG_NAME'
     value: 'lakebase-fastapi-app-catalog'
 
-  # Synced table pipeline checkpoint storage (writable catalog.schema)
+  # Synced table pipeline checkpoint storage (set to a catalog.schema you can write to)
   - name: 'SYNCED_TABLE_STORAGE_CATALOG'
-    value: 'mfg_lb_epl'
+    value: 'your_storage_catalog'
   - name: 'SYNCED_TABLE_STORAGE_SCHEMA'
-    value: 'demo'
+    value: 'your_storage_schema'
 
   - name: 'DATABRICKS_DATABASE_PORT'
     value: '5432'

@@ -18,11 +18,11 @@ variables:
     description: UC source table synced into Lakebase Postgres
     default: samples.tpch.orders
   pipeline_storage_catalog:
-    description: Catalog for the sync pipeline's checkpoint storage (a writable, pre-existing catalog)
-    default: mfg_lb_epl
+    description: Catalog for the sync pipeline's checkpoint storage (set to a writable, pre-existing catalog)
+    default: your_storage_catalog
   pipeline_storage_schema:
-    description: Schema for the sync pipeline's checkpoint storage
-    default: demo
+    description: Schema for the sync pipeline's checkpoint storage (set to a writable schema)
+    default: your_storage_schema
 
 resources:
   postgres_projects:

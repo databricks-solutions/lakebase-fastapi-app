@@ -14,6 +14,8 @@ from databricks.sdk.service.postgres import (
     ProjectSpec,
 )
 import requests
+import psycopg
+from psycopg import sql
 from ...models.lakebase import LakebaseResourcesDeleteResponse, LakebaseResourcesResponse
 
 from fastapi import APIRouter, HTTPException, Query
@@ -243,6 +245,56 @@ async def create_lakebase_resources(
         if sync_error is None:
             sync_error = str(e)
         logger.error(f"API error during synced table creation: {e}")
+
+    # Grant the app's service principal read access to the synced table. The synced
+    # table is owned by the creating superuser; the app SP is a separate identity and
+    # needs an explicit GRANT (Databricks identities are not auto-synced to Postgres
+    # roles). Runs only when this endpoint is invoked by a databricks_superuser.
+    app_sp_id = os.getenv("APP_SERVICE_PRINCIPAL_ID")
+    if sync_error is None and app_sp_id:
+        endpoint_name = f"{branch_name}/endpoints/{endpoint_id}"
+        try:
+            host = w.postgres.get_endpoint(name=endpoint_name).status.hosts.host
+            cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
+            caller = w.current_user.me().user_name  # must be a databricks_superuser
+            conninfo = (
+                f"host={host} port=5432 dbname={lakebase_database_name} "
+                f"user={caller} sslmode=require"
+            )
+            logger.info(
+                f"Granting SELECT on {destination_schema}.{destination_table} "
+                f"to service principal {app_sp_id}"
+            )
+            async with await psycopg.AsyncConnection.connect(
+                conninfo, password=cred.token, autocommit=True, prepare_threshold=None
+            ) as conn:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS databricks_auth")
+                try:
+                    # Role usually already exists (created by the app resource binding)
+                    await conn.execute(
+                        "SELECT databricks_create_role(%s, 'SERVICE_PRINCIPAL')",
+                        (app_sp_id,),
+                    )
+                except Exception:
+                    pass
+                await conn.execute(
+                    sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                        sql.Identifier(destination_schema), sql.Identifier(app_sp_id)
+                    )
+                )
+                await conn.execute(
+                    sql.SQL("GRANT SELECT ON {}.{} TO {}").format(
+                        sql.Identifier(destination_schema),
+                        sql.Identifier(destination_table),
+                        sql.Identifier(app_sp_id),
+                    )
+                )
+            logger.info(f"Granted SELECT to service principal {app_sp_id}")
+        except Exception as e:
+            logger.error(
+                f"Failed to grant SELECT to SP {app_sp_id} "
+                f"(must run as a databricks_superuser): {e}"
+            )
 
     workspace_url = w.config.host
     if sync_error is not None:

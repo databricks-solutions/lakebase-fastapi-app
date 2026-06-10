@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     if database_exists:
         try:
             init_engine()
-            from core.database import engine
+            from .core.database import engine
 
             async with engine.begin() as conn:
                 await conn.run_sync(SQLModel.metadata.create_all)

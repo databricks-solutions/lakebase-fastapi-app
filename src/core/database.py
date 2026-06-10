@@ -95,7 +95,7 @@ def init_engine():
         )
 
         url = URL.create(
-            drivername="postgresql+asyncpg",
+            drivername="postgresql+psycopg",
             username=username,
             password="",  # Will be set by event handler
             host=host,
@@ -113,11 +113,14 @@ def init_engine():
             # OPTIONAL: Recycle connections every hour (before token expires)
             pool_recycle=int(os.getenv("DB_POOL_RECYCLE_INTERVAL", "3600")),
             connect_args={
-                "command_timeout": int(os.getenv("DB_COMMAND_TIMEOUT", "10")),
-                "server_settings": {
-                    "application_name": "fastapi_orders_app",
-                },
-                "ssl": "require",
+                # psycopg3 (async) connection kwargs
+                "sslmode": "require",
+                "application_name": "fastapi_orders_app",
+                # Server-side prepared statements left ENABLED (psycopg default: prepare
+                # after ~5 executions per connection) for lower latency on repeated
+                # queries. Safe here because Lakebase OAuth apps connect to the DIRECT
+                # endpoint, not a transaction pooler. If you ever route through the
+                # Lakebase pooler, set "prepare_threshold": None to disable them.
             },
         )
 
