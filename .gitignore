@@ -10,6 +10,7 @@ __pycache__/
 # Distribution / packaging
 .vscode
 .databricks
+.claude
 .Python
 build/
 develop-eggs/
