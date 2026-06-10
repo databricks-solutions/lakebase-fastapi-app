@@ -1,17 +1,25 @@
 bundle:
   name: lakebase-fastapi-app
 
-# After deploy, grant the app's service principal a Postgres role. This runs
-# locally as the deployer (project creator = superuser), so the app SP needs no
-# CAN MANAGE pre-grant. See scripts/grant_app_superuser.sh. (experimental feature)
+# After deploy, grant the app's service principal LEAST-PRIVILEGE access (USAGE +
+# SELECT on the synced table). Runs locally as the deployer (project creator =
+# superuser), so the app SP needs no CAN MANAGE pre-grant. Needs the project's
+# Python env (psycopg, databricks-sdk). See scripts/grant_app_access.py. (experimental)
 experimental:
   scripts:
-    postdeploy: bash scripts/grant_app_superuser.sh
+    postdeploy: uv run python scripts/grant_app_access.py
 
 # These variables let `databricks bundle deploy` create the SAME resources the
 # Swagger endpoint (/resources/create-lakebase-resources) creates at runtime.
 # Override per target or with --var.
 variables:
+  project_name:
+    description: >-
+      Lakebase autoscaling project id (also the display name). THE single place to
+      change the project name — flows to the project, the app's DB binding (which
+      injects PGHOST/PGDATABASE/PGUSER into the app), and ENDPOINT_NAME. Override
+      with --var project_name=... or per target.
+    default: lakebase-fastapi-app-db
   pg_database:
     description: Postgres database name (Lakebase default is databricks_postgres)
     default: databricks_postgres
@@ -34,8 +42,8 @@ variables:
 resources:
   postgres_projects:
     my_db:
-      project_id: lakebase-fastapi-app-db
-      display_name: 'lakebase-fastapi-db'
+      project_id: ${var.project_name}
+      display_name: ${var.project_name}
       pg_version: 17
       default_endpoint_settings:
         autoscaling_limit_min_cu: 0.5
@@ -103,7 +111,14 @@ resources:
             # with the branch, so no create step is needed.
             database: ${resources.postgres_branches.production.id}/databases/databricks-postgres
             permission: CAN_CONNECT_AND_CREATE
-      # command + env come from app.yaml (required by the Databricks Apps runtime).
+      # The DB binding above auto-injects PGHOST/PGPORT/PGDATABASE/PGUSER/PGSSLMODE into
+      # the app at runtime. The only extra var the app needs is ENDPOINT_NAME (to mint
+      # OAuth tokens) — injected here from the endpoint resource, so the project name
+      # lives ONLY in ${var.project_name} and never in app.yaml. `command` is in app.yaml.
+      config:
+        env:
+          - name: ENDPOINT_NAME
+            value: ${resources.postgres_endpoints.primary.id}
 
 targets:
   dev:

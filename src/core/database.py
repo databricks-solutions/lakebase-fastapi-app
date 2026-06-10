@@ -63,6 +63,49 @@ async def refresh_token_background():
             )
 
 
+def _resolve_endpoint_name() -> str:
+    """Lakebase endpoint resource path: projects/<p>/branches/<b>/endpoints/<e>.
+
+    Used to mint OAuth tokens. Resolution order:
+      1. ENDPOINT_NAME env — set by the bundle (databricks.yml config.env) when
+         deployed, or in .env locally.
+      2. Self-derive from the app's own DB binding — when running as a deployed
+         Databricks App (PGAPPNAME is injected), read the bound branch and append
+         the endpoint id. Keeps app.yaml free of project/branch names.
+      3. Legacy LAKEBASE_PROJECT_ID/BRANCH/ENDPOINT (local/back-compat).
+    """
+    name = os.getenv("ENDPOINT_NAME")
+    if name:
+        return name
+
+    endpoint_id = os.getenv("LAKEBASE_ENDPOINT", "primary")
+
+    app_name = os.getenv("PGAPPNAME") or os.getenv("DATABRICKS_APP_NAME")
+    if app_name:
+        try:
+            app = WorkspaceClient().apps.get(name=app_name)
+            branch = next(
+                (
+                    r.postgres.branch
+                    for r in (app.resources or [])
+                    if getattr(r, "postgres", None) and r.postgres.branch
+                ),
+                None,
+            )
+            if branch:
+                return f"{branch}/endpoints/{endpoint_id}"
+        except Exception as e:  # noqa: BLE001 - fall through to env-based resolution
+            logger.warning(f"Could not derive endpoint from app binding: {e}")
+
+    project_id = os.getenv("LAKEBASE_PROJECT_ID")
+    if not project_id:
+        raise RuntimeError(
+            "Set ENDPOINT_NAME (or LAKEBASE_PROJECT_ID) so the app can reach Lakebase"
+        )
+    branch = os.getenv("LAKEBASE_BRANCH", "main")
+    return f"projects/{project_id}/branches/{branch}/endpoints/{endpoint_id}"
+
+
 def init_engine():
     """Initialize database connection using SQLAlchemy with automatic token refresh"""
     global \
@@ -76,33 +119,31 @@ def init_engine():
     try:
         workspace_client = WorkspaceClient()
 
-        project_id = os.getenv("LAKEBASE_PROJECT_ID")
-        if not project_id:
-            raise RuntimeError(
-                "LAKEBASE_PROJECT_ID environment variable is required"
-            )
+        database_endpoint_name = _resolve_endpoint_name()
 
-        # Autoscaling Lakebase: connect via the endpoint's host, not the
-        # provisioned database-instance API.
-        branch = os.getenv("LAKEBASE_BRANCH", "main")
-        endpoint_id = os.getenv("LAKEBASE_ENDPOINT", "primary")
-        database_endpoint_name = (
-            f"projects/{project_id}/branches/{branch}/endpoints/{endpoint_id}"
+        # Connection details: prefer the PG* env vars the Lakebase app binding injects
+        # at runtime (PGHOST/PGPORT/PGDATABASE/PGUSER/PGSSLMODE); locally fall back to
+        # deriving the host from the endpoint and to DATABRICKS_CLIENT_ID/current user.
+        host = os.getenv("PGHOST") or workspace_client.postgres.get_endpoint(
+            name=database_endpoint_name
+        ).status.hosts.host
+        port = int(os.getenv("PGPORT") or os.getenv("DATABRICKS_DATABASE_PORT", "5432"))
+        database_name = os.getenv("PGDATABASE") or os.getenv(
+            "LAKEBASE_DATABASE_NAME", "databricks_postgres"
         )
-
-        endpoint = workspace_client.postgres.get_endpoint(name=database_endpoint_name)
-        host = endpoint.status.hosts.host
+        username = (
+            os.getenv("PGUSER")
+            or os.getenv("DATABRICKS_CLIENT_ID")
+            or workspace_client.current_user.me().user_name
+            or None
+        )
+        sslmode = os.getenv("PGSSLMODE", "require")
 
         # Generate initial credentials (OAuth token used as the Postgres password)
         _generate_token()
-        logger.info("Database: Initial credentials generated")
-
-        # Create Engine
-        database_name = os.getenv("LAKEBASE_DATABASE_NAME", "databricks_postgres")
-        username = (
-            os.getenv("DATABRICKS_CLIENT_ID")
-            or workspace_client.current_user.me().user_name
-            or None
+        logger.info(
+            f"Database: connecting to {host}/{database_name} as {username} "
+            f"(endpoint {database_endpoint_name})"
         )
 
         url = URL.create(
@@ -110,7 +151,7 @@ def init_engine():
             username=username,
             password="",  # Will be set by event handler
             host=host,
-            port=int(os.getenv("DATABRICKS_DATABASE_PORT", "5432")),
+            port=port,
             database=database_name,
         )
 
@@ -131,7 +172,7 @@ def init_engine():
             pool_use_lifo=True,
             connect_args={
                 # psycopg3 (async) connection kwargs
-                "sslmode": "require",
+                "sslmode": sslmode,
                 "application_name": "fastapi_orders_app",
                 # Per-statement server-side timeout so one slow query can't pin a
                 # pooled connection indefinitely (DB_COMMAND_TIMEOUT is in seconds).
@@ -199,9 +240,9 @@ def require_db() -> None:
         raise HTTPException(
             status_code=503,
             detail=(
-                "Database not initialized. Provision Lakebase via the bundle and "
-                "grant the app service principal credentials "
-                "(POST /api/v1/resources/create-app-credentials)."
+                "Database not initialized. Provision Lakebase via "
+                "`databricks bundle deploy` (its postdeploy hook grants the app "
+                "service principal access)."
             ),
         )
 
@@ -215,25 +256,21 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 def check_database_exists() -> bool:
-    """Check if the Lakebase autoscaling project exists"""
-    project_id = os.getenv("LAKEBASE_PROJECT_ID")
+    """Check if the Lakebase endpoint is reachable (resolves ENDPOINT_NAME)."""
     try:
-        workspace_client = WorkspaceClient()
-
-        if not project_id:
-            logger.warning(
-                "LAKEBASE_PROJECT_ID not set - project check skipped"
-            )
-            return False
-
-        workspace_client.postgres.get_project(name=f"projects/{project_id}")
-        logger.info(f"Lakebase project '{project_id}' exists")
+        endpoint_name = _resolve_endpoint_name()
+    except RuntimeError as e:
+        logger.warning(f"Endpoint not configured - check skipped: {e}")
+        return False
+    try:
+        WorkspaceClient().postgres.get_endpoint(name=endpoint_name)
+        logger.info(f"Lakebase endpoint '{endpoint_name}' exists")
         return True
     except Exception as e:
         if "not found" in str(e).lower() or "resource not found" in str(e).lower():
-            logger.info(f"Lakebase project '{project_id}' does not exist")
+            logger.info(f"Lakebase endpoint '{endpoint_name}' does not exist")
         else:
-            logger.error(f"Error checking project existence: {e}")
+            logger.error(f"Error checking endpoint existence: {e}")
         return False
 
 

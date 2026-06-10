@@ -7,21 +7,10 @@ command:
   - "2"
 
 env:
-  # Lakebase (autoscaling Postgres) connection — the app reads these at runtime.
-  # app.yaml can't reference bundle ${resources}, so keep LAKEBASE_PROJECT_ID /
-  # LAKEBASE_BRANCH in sync with databricks.yml.
-  - name: 'LAKEBASE_PROJECT_ID'
-    value: 'lakebase-fastapi-app-db'
-  - name: 'LAKEBASE_BRANCH'
-    value: 'production'
-  - name: 'LAKEBASE_ENDPOINT'
-    value: 'primary'
-  - name: 'LAKEBASE_DATABASE_NAME'
-    value: 'databricks_postgres'
-  - name: 'DATABRICKS_DATABASE_PORT'
-    value: '5432'
-
-  # Connection pool tuning
+  # No project/db names here. The Lakebase DB resource binding (databricks.yml)
+  # auto-injects PGHOST/PGPORT/PGDATABASE/PGUSER/PGSSLMODE, and ENDPOINT_NAME is
+  # injected via databricks.yml config.env (the app also self-derives it from its
+  # binding as a fallback). Only stable connection-pool tuning lives here:
   - name: 'DB_POOL_SIZE'
     value: '5'
   - name: 'DB_MAX_OVERFLOW'

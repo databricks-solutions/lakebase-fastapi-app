@@ -50,8 +50,8 @@ async def lifespan(app: FastAPI):
             "(data endpoints return 503 until provisioned)"
         )
         logger.info(
-            "Provision Lakebase via `databricks bundle deploy`, then bootstrap "
-            "credentials via POST /api/v1/resources/create-app-credentials"
+            "Provision Lakebase via `databricks bundle deploy` (its postdeploy hook "
+            "grants the app service principal access)"
         )
 
     logger.info("Application startup complete")
