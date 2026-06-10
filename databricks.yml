@@ -1,6 +1,13 @@
 bundle:
   name: lakebase-fastapi-app
 
+# After deploy, grant the app's service principal a Postgres role. This runs
+# locally as the deployer (project creator = superuser), so the app SP needs no
+# CAN MANAGE pre-grant. See scripts/grant_app_superuser.sh. (experimental feature)
+experimental:
+  scripts:
+    postdeploy: bash scripts/grant_app_superuser.sh
+
 # These variables let `databricks bundle deploy` create the SAME resources the
 # Swagger endpoint (/resources/create-lakebase-resources) creates at runtime.
 # Override per target or with --var.
@@ -34,6 +41,9 @@ resources:
         autoscaling_limit_min_cu: 0.5
         autoscaling_limit_max_cu: 4
         suspend_timeout_duration: 300s
+      # The app SP's Postgres role is granted automatically after deploy by the
+      # `experimental.scripts.postdeploy` hook below (run as you, the project
+      # creator/superuser). The app SP therefore does NOT need CAN MANAGE here.
 
   postgres_branches:
     production:

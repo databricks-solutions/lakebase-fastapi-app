@@ -6,6 +6,7 @@ from typing import AsyncGenerator
 
 from databricks.sdk import WorkspaceClient
 from dotenv import load_dotenv
+from fastapi import HTTPException
 from sqlalchemy import URL, event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,27 +26,41 @@ postgres_password: str | None = None
 last_password_refresh: float = 0
 token_refresh_task: asyncio.Task | None = None
 
+# Lakebase OAuth credentials last 60 minutes. Refresh proactively at 45 min and
+# retry on failure so a single transient error can't leave us past expiry.
+TOKEN_LIFETIME_SECONDS = 3600
+REFRESH_AT_SECONDS = 45 * 60
+REFRESH_RETRY_BACKOFF = [5, 15, 30, 60, 120]
+
+
+def _generate_token() -> None:
+    """Generate a fresh PostgreSQL OAuth token (synchronous SDK call)."""
+    global postgres_password, last_password_refresh
+    cred = workspace_client.postgres.generate_database_credential(
+        endpoint=database_endpoint_name
+    )
+    postgres_password = cred.token
+    last_password_refresh = time.time()
+
 
 async def refresh_token_background():
-    """Background task to refresh tokens every 50 minutes"""
-    global postgres_password, last_password_refresh, workspace_client, database_endpoint_name
-
+    """Proactively refresh the OAuth token before expiry, with bounded retries."""
     while True:
-        try:
-            await asyncio.sleep(50 * 60)  # Wait 50 minutes
-            logger.info(
-                "Background token refresh: Generating fresh PostgreSQL OAuth token"
+        sleep_for = max(0, (last_password_refresh + REFRESH_AT_SECONDS) - time.time())
+        await asyncio.sleep(sleep_for)
+        for attempt, backoff in enumerate([0, *REFRESH_RETRY_BACKOFF]):
+            if backoff:
+                await asyncio.sleep(backoff)
+            try:
+                _generate_token()
+                logger.info("Token refresh succeeded (attempt %d)", attempt + 1)
+                break
+            except Exception:
+                logger.exception("Token refresh failed (attempt %d)", attempt + 1)
+        else:
+            logger.critical(
+                "Token refresh exhausted retries; connections will fail at expiry"
             )
-
-            cred = workspace_client.postgres.generate_database_credential(
-                endpoint=database_endpoint_name,
-            )
-            postgres_password = cred.token
-            last_password_refresh = time.time()
-            logger.info("Background token refresh: Token updated successfully")
-
-        except Exception as e:
-            logger.error(f"Background token refresh failed: {e}")
 
 
 def init_engine():
@@ -79,11 +94,7 @@ def init_engine():
         host = endpoint.status.hosts.host
 
         # Generate initial credentials (OAuth token used as the Postgres password)
-        cred = workspace_client.postgres.generate_database_credential(
-            endpoint=database_endpoint_name
-        )
-        postgres_password = cred.token
-        last_password_refresh = time.time()
+        _generate_token()
         logger.info("Database: Initial credentials generated")
 
         # Create Engine
@@ -103,19 +114,28 @@ def init_engine():
             database=database_name,
         )
 
+        command_timeout_ms = int(os.getenv("DB_COMMAND_TIMEOUT", "10")) * 1000
         engine = create_async_engine(
             url,
-            pool_pre_ping=False,
+            # The autoscaling endpoint suspends after idle (scale-to-zero), which kills
+            # pooled connections. pre_ping validates each connection on checkout so the
+            # first request after a wake doesn't hit a dead socket.
+            pool_pre_ping=True,
             echo=False,
             pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
             max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "10")),
             pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
-            # OPTIONAL: Recycle connections every hour (before token expires)
-            pool_recycle=int(os.getenv("DB_POOL_RECYCLE_INTERVAL", "3600")),
+            # Recycle below the 60-min token lifetime (and any server idle limit).
+            pool_recycle=int(os.getenv("DB_POOL_RECYCLE_INTERVAL", "2700")),
+            # Reuse hot connections; let idle ones age out instead of round-robining.
+            pool_use_lifo=True,
             connect_args={
                 # psycopg3 (async) connection kwargs
                 "sslmode": "require",
                 "application_name": "fastapi_orders_app",
+                # Per-statement server-side timeout so one slow query can't pin a
+                # pooled connection indefinitely (DB_COMMAND_TIMEOUT is in seconds).
+                "options": f"-c statement_timeout={command_timeout_ms}",
                 # Server-side prepared statements left ENABLED (psycopg default: prepare
                 # after ~5 executions per connection) for lower latency on repeated
                 # queries. Safe here because Lakebase OAuth apps connect to the DIRECT
@@ -127,8 +147,14 @@ def init_engine():
         # Register token provider for new connections
         @event.listens_for(engine.sync_engine, "do_connect")
         def provide_token(dialect, conn_rec, cargs, cparams):
-            global postgres_password
-            # Use current token from background refresh
+            # Safety net: if the background refresh task died, never hand out a token
+            # that's near/past its lifetime — refresh synchronously at connect time.
+            if time.time() - last_password_refresh > TOKEN_LIFETIME_SECONDS - 60:
+                try:
+                    _generate_token()
+                    logger.warning("Token was stale at connect; refreshed synchronously")
+                except Exception:
+                    logger.exception("Synchronous token refresh at connect failed")
             cparams["password"] = postgres_password
 
         AsyncSessionLocal = sessionmaker(
@@ -161,6 +187,23 @@ async def stop_token_refresh():
         except asyncio.CancelledError:
             pass
         logger.info("Background token refresh task stopped")
+
+
+def require_db() -> None:
+    """FastAPI dependency: return 503 until the database engine is initialized.
+
+    Lets data routers register unconditionally (static API surface) while still
+    failing cleanly when Lakebase isn't provisioned/reachable yet.
+    """
+    if AsyncSessionLocal is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Database not initialized. Provision Lakebase via the bundle and "
+                "grant the app service principal credentials "
+                "(POST /api/v1/resources/create-app-credentials)."
+            ),
+        )
 
 
 async def get_async_db() -> AsyncGenerator[AsyncSession, None]:

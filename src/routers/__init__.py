@@ -2,15 +2,12 @@
 
 from fastapi import APIRouter
 
-from ..core.database import check_database_exists
-
 # Import router factory from versioned packages
 from .v1 import create_router
 
-# Check if database exists and create appropriate router
-database_exists = check_database_exists()
-print(f"Database exists: {database_exists}")
-v1_router = create_router(database_exists=database_exists)
+# Static router surface — no import-time DB/network calls. Data endpoints are
+# guarded at request time by the require_db dependency.
+v1_router = create_router()
 
 # Create a router for the API
 api_router = APIRouter()
