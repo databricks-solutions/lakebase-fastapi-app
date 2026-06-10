@@ -3,12 +3,12 @@ name = "lakebase-fastapi-app"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "annotated-types==0.7.0",
     "anyio==4.9.0",
     "asyncio>=3.4.3",
-    "asyncpg==0.30.0",
+    "psycopg[binary]>=3.2",
     "cachetools==5.5.2",
     "certifi==2025.4.26",
     "charset-normalizer==3.4.2",

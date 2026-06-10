@@ -28,9 +28,13 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+production_readiness.md
+# Kept out of the repo for portability: the Databricks App build uses the pip path
+# (committed requirements.txt + Python 3.11). uv.lock embeds a private index URL and
+# isn't portable; .python-version is a uv signal that conflicts with the pip path.
+# Both are fine to keep locally for your own uv workflow.
 uv.lock
-# .python-version is intentionally tracked so the Databricks App build pins Python 3.13
-# (pydantic-core==2.33.2 has no 3.14 wheel and fails to build from source on 3.14).
+.python-version
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
