@@ -1,25 +1,16 @@
-command: ["uvicorn", "src.app:app"]
+command:
+  - uvicorn
+  - src.app:app
+  - --host
+  - "0.0.0.0"
+  - --workers
+  - "2"
 
 env:
-  - name: 'LAKEBASE_INSTANCE_NAME'
-    value: 'your_db_instance_name'
-  - name: 'LAKEBASE_DATABASE_NAME'
-    value: 'your_database_name'
-  - name: 'LAKEBASE_CATALOG_NAME'
-    value: 'your_database_name'
-  - name: 'SYNCHED_TABLE_STORAGE_CATALOG'
-    value: 'your_database_name'
-  - name: 'SYNCHED_TABLE_STORAGE_SCHEMA'
-    value: 'your_database_name'
-
-  - name: 'DATABRICKS_DATABASE_PORT'
-    value: '5432'
-
-  - name: 'DEFAULT_POSTGRES_SCHEMA'
-    value: 'public'
-  - name: 'DEFAULT_POSTGRES_TABLE'
-    value: 'orders_synced'
-
+  # No project/db names here. The Lakebase DB resource binding (databricks.yml)
+  # auto-injects PGHOST/PGPORT/PGDATABASE/PGUSER/PGSSLMODE, and ENDPOINT_NAME is
+  # injected via databricks.yml config.env (the app also self-derives it from its
+  # binding as a fallback). Only stable connection-pool tuning lives here:
   - name: 'DB_POOL_SIZE'
     value: '5'
   - name: 'DB_MAX_OVERFLOW'
@@ -29,5 +20,4 @@ env:
   - name: 'DB_POOL_TIMEOUT'
     value: '10'
   - name: 'DB_POOL_RECYCLE_INTERVAL'
-    value: '3600'
-    
+    value: '2700'

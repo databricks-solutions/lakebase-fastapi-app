@@ -1,219 +1,209 @@
 ![Databricks Apps](https://img.shields.io/badge/Databricks-Apps-orange)
-[![Python](https://img.shields.io/badge/Python-3.13-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115.0-009688.svg?style=flat&logo=FastAPI&logoColor=white)](https://fastapi.tiangolo.com)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688.svg?style=flat&logo=FastAPI&logoColor=white)](https://fastapi.tiangolo.com)
 ![GitHub stars](https://img.shields.io/github/stars/databricks-solutions/lakebase-fastapi-app?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/databricks-solutions/lakebase-fastapi-app?style=social)
 ![GitHub issues](https://img.shields.io/github/issues/databricks-solutions/lakebase-fastapi-app)
 ![GitHub last commit](https://img.shields.io/github/last-commit/databricks-solutions/lakebase-fastapi-app)
 
-# 🌊 Lakebase FastAPI Databricks App.
+# 🌊 Lakebase FastAPI Databricks App
 
-A production-ready FastAPI application for accessing Databricks Lakebase data. Features scalable architecture, automatic token refresh, and optimized database connection management.
+A FastAPI application that serves data from a **Databricks Lakebase (autoscaling Postgres)** synced table. It features OAuth-based connectivity with automatic token rotation, connection pooling tuned for scale-to-zero, and fully bundle-driven provisioning.
 
-Learn more about Databricks Lakebase [here](https://docs.databricks.com/aws/en/oltp/)
+Learn more about Databricks Lakebase [here](https://docs.databricks.com/aws/en/oltp/).
 
-## ❓ Why do you need an api? 
-- **Database Abstraction & Security**:  APIs prevent direct database access and provide controlled access through authenticated apps. 
-- **Standardized Access Patterns**: APIs create consistent ways to interact with data across different teams and applications. 
-- **Development Velocity**:   APIs reduce duplicate code in applications. Write your api logic once and let applications leverage your endpoint.
-- **Performance Optimization & Caching**:  APIs leverage connection pooling, query optimization, and results caching for high performance workloads.
-- **Cross Platform Capability**: Any programming language can leverage the REST protocol. 
-- **Audit Trails & Monitoring**: Custom logging, request tracking, and usage analytics give visibility into data access.
-- **Future Proof**:  APIs simplify switching between databases, adding new data sources, or changing infrastructure.
+## ❓ Why do you need an API?
+- **Database Abstraction & Security**: APIs prevent direct database access and provide controlled access through authenticated apps.
+- **Standardized Access Patterns**: APIs create consistent ways to interact with data across teams and applications.
+- **Development Velocity**: Write your API logic once and let applications leverage your endpoint.
+- **Performance Optimization & Caching**: Connection pooling, query optimization, and results caching for high-performance workloads.
+- **Cross Platform Capability**: Any language can use the REST protocol.
+- **Audit Trails & Monitoring**: Custom logging, request tracking, and usage analytics.
+- **Future Proof**: APIs simplify switching databases, adding data sources, or changing infrastructure.
 
 ## 🌟 Features
-- **FastAPI REST API** with async/await support
-- **Databricks Lakebase Integration** with OAuth token management
-- **Automatic Resource Management** - create and delete Lakebase resources on-demand
-- **Dynamic Endpoint Registration** - endpoints are conditionally loaded based on database availability
-- **Automatic Token Refresh** with configurable intervals
-- **Production-Ready Architecture** with domain-driven design
-- **Connection Pooling** with optimized settings for high-traffic scenarios
-- **Environment-Based Configuration** for different deployment environments
-- **Comprehensive Error Handling** and logging
-- **Immediate Example** plugs into databricks sample datasets
+- **FastAPI REST API** with async/await
+- **Lakebase autoscaling Postgres** over OAuth (direct endpoint), with **psycopg3 (async)**
+- **Automatic OAuth token rotation** — proactive refresh with retry/backoff and a connect-time staleness guard
+- **Scale-to-zero-aware connection pool** — pre-ping, recycle below token lifetime, LIFO reuse
+- **Bundle-driven provisioning** — one `databricks bundle deploy` creates the project, branch, endpoint, catalog, and synced table, deploys the app, and grants the app's service principal least-privilege (`USAGE` + `SELECT`) access via a post-deploy hook
+- **Static API surface** — data endpoints are always registered and return `503` until the database is initialized (no restart needed)
+- **Immediate example** over Databricks sample data (`samples.tpch.orders` → Postgres `public.orders_synced`)
 
 ## 📋 Prerequisites
-- **Databricks Workspace**: Permissions to create apps and database instances
-- **Python 3.11+** and [uv package manager](https://docs.astral.sh/uv/getting-started/)
-- **Environment Variables** configured (see Configuration section)
+- **Databricks Workspace** with permission to create **Lakebase projects** and **Apps**
+- **Databricks CLI** (v1.1+) with an authenticated profile (`databricks auth login`) — used for bundle deploys
+- **Python 3.11+** and the [uv package manager](https://docs.astral.sh/uv/getting-started/) (for local development)
 
 ## 🚀 Quick Start
 
+### Deploy as a Databricks App (recommended)
+Provisioning is owned by the bundle — there are no runtime "create resource" endpoints, and you don't edit `app.yaml` or `.env` to deploy.
 
-### Local Development
-
-1. **Clone and install dependencies:**
+1. **Clone & authenticate:**
    ```bash
    git clone https://github.com/databricks-solutions/lakebase-fastapi-app.git
+   cd lakebase-fastapi-app
+   databricks auth login   # profile must be able to create Lakebase projects + apps
+   ```
+2. **Set the three bundle variables** for your workspace (edit the `variables:` defaults in `databricks.yml`, or pass `--var` at deploy):
+
+   | Variable | What to set it to |
+   |----------|-------------------|
+   | `project_name` | A Lakebase project id, unique per deployment (the single place the name lives) |
+   | `pipeline_storage_catalog` | A UC catalog **you can write to** (holds the sync pipeline's checkpoints) |
+   | `pipeline_storage_schema` | A schema in that catalog |
+
+3. **Deploy:**
+   ```bash
+   databricks bundle deploy -t dev \
+     --var="project_name=my-lakebase-app" \
+     --var="pipeline_storage_catalog=my_catalog" \
+     --var="pipeline_storage_schema=my_schema"
+   ```
+   This creates the Lakebase project/branch/endpoint/catalog/synced table, deploys the app, and the `postdeploy` hook ([`scripts/grant_app_access.py`](scripts/grant_app_access.py)) grants the app's service principal least-privilege `USAGE` + `SELECT` on the synced table — run as you (the project creator/superuser), so **no manual permission step is required**.
+4. **Open the app** (`<your_app_url>/docs`). The `/api/v1` endpoints serve the synced data. (They return **`503`** until the first sync provisions the table.)
+5. **Tear down** when finished:
+   ```bash
+   databricks bundle destroy -t dev
+   ```
+
+> **Why so little config?** The app's database resource binding auto-injects the connection (`PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER`/`PGSSLMODE`), and `ENDPOINT_NAME` is injected from the bundle (`config.env`). So **no project/db names live in `app.yaml`** — change the name with one `--var project_name=...`.
+
+### Local development
+1. **Install dependencies:**
+   ```bash
    uv sync
    ```
-
-2. **Configure environment variables:**
+2. **Configure the one connection identifier:**
    ```bash
    cp .env.example .env
-   # Edit .env with your Databricks configuration
    ```
-
+   Set `ENDPOINT_NAME` to your deployed project's endpoint (the app derives host/user/database from it):
+   ```
+   ENDPOINT_NAME=projects/<your-project>/branches/production/endpoints/primary
+   ```
 3. **Run the application:**
    ```bash
-   uv run uvicorn src.main:app --reload
+   uv run uvicorn src.app:app --reload
    ```
-
 4. **Access the API:**
    - API: `http://localhost:8000`
    - Interactive docs: `http://localhost:8000/docs`
 
-5. **Create Lakebase Resources for Orders endpoints:**
-   - Docs page: `http://localhost:8000/docs`
-   - Click Dropdown: `/api/v1/resources/create-lakebase-resources`
-   - Click 'Try it Out'
-   - Set create_resources = true 
-   - Click Execute (**Resources will take several minutes to deploy**)
+> Locally you connect as **your own identity** (a project superuser) using your CLI profile, so the order endpoints work against the synced table as soon as it exists. Data endpoints return **`503`** until the engine connects — there's no restart step or conditional endpoint registration.
 
-6. **Orders Endpoints:**
-   - Confirm resources from step 5 are deployed.
-   - Restart the fastapi service
-   - You should now see the /orders endpoints.
+## ⚙️ Configuration
 
-7. **Delete Lakebase Resources:**
-   - Docs page: `http://localhost:8000/docs`
-   - Click Dropdown: `/api/v1/resources/delete-lakebase-resources`
-   - Click 'Try it Out'
-   - Set confirm_deletion = true 
-   - Click Execute
+### Deployment — bundle variables (`databricks.yml`)
+The single source of truth for a deployment. Override with `--var` or edit the defaults:
 
-### Databricks Apps Deployment
-   *assumes local development steps have been completed.
-1. **Databricks UI: Create Custom App:**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `project_name` | Lakebase project id (and display name) — **the one place** to change the name | `lakebase-fastapi-app-db` |
+| `catalog_name` | Postgres-backed UC catalog the bundle creates (unique per project) | `lakebase-fastapi-app-catalog` |
+| `pg_database` | Postgres database name | `databricks_postgres` |
+| `source_table` | UC source table to sync | `samples.tpch.orders` |
+| `pipeline_storage_catalog` | Writable catalog for sync-pipeline checkpoints | `your_storage_catalog` |
+| `pipeline_storage_schema` | Writable schema for sync-pipeline checkpoints | `your_storage_schema` |
 
-2. **Databricks UI: App Database Instance Permissions:**
-   - Copy App Service Principal Id from App -> Authorization
-   - Compute -> Database Instances -> <your_instance> -> Permissions
-   - Add PostgreSQL Role -> enter app service principal id -> assign databricks superuser
-   - Grant App Service Principal permissions to the Postgres Catalog.
+> When deployed, the app's DB binding auto-injects `PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER`/`PGSSLMODE`, and `ENDPOINT_NAME` is injected via the app's `config.env` (derived from the endpoint resource). `PGUSER` = the app's `DATABRICKS_CLIENT_ID` (its Postgres role). **No project/db names are set in `app.yaml`.**
 
-3. **Configure environment variables in app.yaml:**
+### Local development (`.env`)
+Local runs don't get the injected `PG*`, so set the one endpoint identifier (plus the synced-table location used by the grant script):
 
-   #### ⚙️ Configuration
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `ENDPOINT_NAME` | Lakebase endpoint resource path — the app derives host/user/database from it | `projects/<p>/branches/production/endpoints/primary` |
+| `DEFAULT_POSTGRES_SCHEMA` | Synced-table schema (also read by the post-deploy grant script) | `public` |
+| `DEFAULT_POSTGRES_TABLE` | Synced-table name (also read by the post-deploy grant script) | `orders_synced` |
 
-   ### Required Environment Variables
+### Optional connection-pool tuning (`app.yaml` env, or `.env` locally)
 
-   | Variable | Description | Example |
-   |----------|-------------|---------|
-   | `LAKEBASE_INSTANCE_NAME` | Lakebase database instance name | `my-lakebase-instance` |
-   | `LAKEBASE_DATABASE_NAME` | Lakebase database name | `demo-database` |
-   | `LAKEBASE_CATALOG_NAME` | Lakebase catalog name | `my-lakebase-catalog` |
-   | `SYNCHED_TABLE_STORAGE_CATALOG` | Catalog for synced table metadata | `my_catalog` |
-   | `SYNCHED_TABLE_STORAGE_SCHEMA` | Schema for synced table metadata | `my_schema` |
-   | `DATABRICKS_DATABASE_PORT` | Postgres Port | `5432` |
-   | `DEFAULT_POSTGRES_SCHEMA` | Database schema | `public` |
-   | `DEFAULT_POSTGRES_TABLE` | Table name | `orders_synced` |
-
-   ### Optional Configuration
-
-   | Variable | Default | Description |
-   |----------|---------|-------------|
-   | `DB_POOL_SIZE` | `5` | Connection pool size |
-   | `DB_MAX_OVERFLOW` | `10` | Max overflow connections |
-   | `DB_POOL_TIMEOUT` | `30` | Pool checkout timeout (seconds) |
-   | `DB_COMMAND_TIMEOUT` | `10` | Query timeout (seconds) |
-   | `DB_POOL_RECYCLE_INTERVAL` | `3600` | Pool Recycle Interval (seconds) |
-
-4. **Deploy app files using Databricks CLI:**
-   ```bash
-   databricks sync --watch . /Workspace/Users/<your_username>/<project_folder> # May need -p <profile_name> depending on .databrickscfg 
-   ```
-5. **Databricks UI: Deploy Application:**
-   - App -> Deploy
-   - Source code path = /Workspace/Users/<your_username>/<project_folder> - source code path is at the project root where app.yaml lives. 
-   - View logs for successful deploy: src.main - INFO - Application startup initiated
-   - View your API docs: <your_app_url>/docs
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_POOL_SIZE` | `5` | Connection pool size |
+| `DB_MAX_OVERFLOW` | `10` | Max overflow connections |
+| `DB_POOL_TIMEOUT` | `30` | Pool checkout timeout (seconds) |
+| `DB_COMMAND_TIMEOUT` | `10` | Per-statement server-side timeout (seconds) |
+| `DB_POOL_RECYCLE_INTERVAL` | `2700` | Recycle connections (seconds) — below the 60-min token lifetime |
 
 ## 🏗️ Architecture
 
-### Project Structure
+### Project structure
 ```
 src/
-├── app.py                   # Main FastAPI application with dynamic endpoint loading
+├── app.py                  # FastAPI app + lifespan (engine init, token refresh, health)
 ├── core/
-│   └── database.py         # Database connection with automatic token refresh
+│   └── database.py         # psycopg3 async engine, OAuth token rotation, require_db guard
 ├── models/
-│   ├── lakebase.py         # Lakebase resource management models
-│   └── orders.py           # Orders models using SQLModel
+│   └── orders.py           # Orders models (SQLModel)
 └── routers/
-    ├── __init__.py         # Dynamic router registration logic
-    └── v1/                 # API v1 endpoints
-        ├── healthcheck.py  # Health check endpoints
-        ├── lakebase.py     # Lakebase resource management endpoints
-        └── orders.py       # Orders endpoints (loaded dynamically)
+    ├── __init__.py         # Static router registration
+    └── v1/
+        ├── healthcheck.py  # Health endpoint
+        └── orders.py       # Order endpoints (guarded by require_db -> 503 until ready)
+scripts/
+└── grant_app_access.py     # Post-deploy: grant the app SP USAGE+SELECT (least privilege)
+databricks.yml              # Bundle: all Lakebase resources + the app + postdeploy hook
 ```
 
-### Database Connection Strategy
-**Important Note:** OAuth tokens expire after one hour, but expiration is enforced only at login. Open connections remain active even if the token expires. However, any PostgreSQL command that requires authentication fails if the token has expired.  Read More: https://docs.databricks.com/aws/en/oltp/oauth
+### Database connection strategy
+The app connects to the autoscaling **endpoint host** using an OAuth credential as the Postgres password (driver: `postgresql+psycopg`, psycopg3 async).
 
-**Automatic Token Refresh:**
-- 50 Minute token refresh with background async task that does not impact requests
-- Guaranteed token refresh before expiry (safe for 1-hour token lifespans)
-- Optimized for high-traffic production applications
-- Pool connections are recycled every hour preventing expired tokens on long connections
+**Token lifecycle** (Lakebase OAuth credentials last ~60 minutes):
+- A background task refreshes **proactively at ~45 minutes** with retry/backoff.
+- A SQLAlchemy `do_connect` hook injects the current token and, as a safety net, refreshes synchronously if the token is near expiry.
+- The pool recycles below the token lifetime (`DB_POOL_RECYCLE_INTERVAL=2700`).
+
+**Pool resilience for scale-to-zero:** the endpoint suspends when idle, killing pooled connections. `pool_pre_ping=True` validates each connection on checkout, `pool_use_lifo=True` reuses hot connections, and recycling ages out the rest.
+
+### Provisioning & permissions
+Everything is created by `databricks bundle deploy`:
+- `postgres_projects` / `postgres_branches` / `postgres_endpoints` — the autoscaling database.
+- `postgres_catalogs` — a Postgres-backed UC catalog (mirrors the DB, so it has a `public` schema).
+- `postgres_synced_tables` — `samples.tpch.orders` → Postgres `public.orders_synced` (SNAPSHOT).
+- `apps` — the FastAPI app, bound to the database (`CAN_CONNECT_AND_CREATE`).
+- `experimental.scripts.postdeploy` — grants the app SP **least-privilege** `USAGE` + `SELECT`, run as the deployer. The app SP does **not** need `CAN MANAGE` or `databricks_superuser`.
 
 ## 📚 API Documentation
 
-### Core Endpoints
+### Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Simple health check |
-| `/api/v1/health/database` | GET | Database health check |
-| `/api/v1/resources/create-lakebase-resources` | POST | Create Lakebase resources |
-| `/api/v1/resources/delete-lakebase-resources` | DELETE | Delete Lakebase resources |
+| `/health` | GET | Liveness check (no DB dependency) |
+| `/api/v1/healthcheck` | GET | Service health |
+| `/api/v1/count` | GET | Total order count |
+| `/api/v1/sample` | GET | 5 random order keys |
+| `/api/v1/pages` | GET | Page-based pagination |
+| `/api/v1/stream` | GET | Cursor-based pagination (high performance) |
+| `/api/v1/{order_key}` | GET | Get an order by key |
 
-### Dynamic Order Endpoints
-*These endpoints are only available when a Lakebase database instance exists*
+> Data endpoints return **`503`** until the database engine is initialized.
+>
+> This API is **read-only** over the synced table (which is read-only and SNAPSHOT-overwritten, and the app SP holds `SELECT`-only). To add writes, create an **app-owned** table and grant the SP write access on it — don't write to the synced table.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/orders/count` | GET | Get total order count |
-| `/api/v1/orders/sample` | GET | Get 5 random order keys |
-| `/api/v1/orders/{order_key}` | GET | Get order by key |
-| `/api/v1/orders/pages` | GET | Page-based pagination (traditional) |
-| `/api/v1/orders/stream` | GET | Cursor-based pagination (high performance) |
-| `/api/v1/orders/{order_key}/status` | POST | Update order status |
-
-### Example Requests
+### Example requests
 
 ```bash
-# Check if app is running
+# Liveness
 curl http://localhost:8000/health
 
-# Check database health
-curl http://localhost:8000/api/v1/health/database
+# Total order count
+curl http://localhost:8000/api/v1/count
 
-# Create Lakebase resources
-curl -X POST http://localhost:8000/api/v1/resources/create-lakebase-resources \
-  -H "Content-Type: application/json" \
-  -d '{}'
+# A specific order
+curl http://localhost:8000/api/v1/1
 
-# Get order count (only available after resources are created)
-curl http://localhost:8000/api/v1/orders/count
+# Page-based pagination
+curl "http://localhost:8000/api/v1/pages?page=1&page_size=10"
 
-# Get specific order
-curl http://localhost:8000/api/v1/orders/1
-
-# Get paginated orders
-curl "http://localhost:8000/api/v1/orders/pages?page=1&page_size=10"
-
-# Get cursor-based orders
-curl "http://localhost:8000/api/v1/orders/stream?cursor=0&page_size=10"
-
-# Update order status
-curl -X POST http://localhost:8000/api/v1/orders/1/status \
-  -H "Content-Type: application/json" \
-  -d '{"o_orderstatus": "F"}'
+# Cursor-based pagination
+curl "http://localhost:8000/api/v1/stream?cursor=0&page_size=10"
 ```
 
-### Response Format
+### Response format
 
 ```json
 {
@@ -228,79 +218,67 @@ curl -X POST http://localhost:8000/api/v1/orders/1/status \
   "o_comment": "nstructions sleep furiously among"
 }
 ```
+
 ## 🔗 Connecting Apps
 
-### View [app-cookbook](https://apps-cookbook.dev/docs/fastapi/getting_started/connections/) to learn how to: 
-
-- **Connect Local Machine to Apps**
-- **Connect External App to Databricks App**
-- **Connect Databricks App to Databricks App**
+View the [apps cookbook](https://apps-cookbook.dev/docs/fastapi/getting_started/connections/) to learn how to:
+- **Connect a local machine to Apps**
+- **Connect an external app to a Databricks App**
+- **Connect a Databricks App to a Databricks App**
 
 ## 🔧 Performance Tuning
 
-### High-Traffic Applications
-
-For applications handling thousands of requests per minute:
-
-1. **Increase pool size:**
+For high-traffic applications:
+1. **Increase pool size** (mind the endpoint's `max_connections`, which scales with CU, and that each uvicorn worker owns its own pool):
    ```env
-   DB_POOL_SIZE=20
-   DB_MAX_OVERFLOW=50
+   DB_POOL_SIZE=10
+   DB_MAX_OVERFLOW=10
    ```
-
-2. **Monitor connection pool metrics** in application logs
+2. **Prefer cursor pagination** (`/api/v1/stream`) for large scans — it is O(page), not O(offset).
+3. **Monitor pool utilization** in application logs.
 
 ## 🛡️ Security
-
-- **OAuth token rotation** prevents credential staleness
-- **SSL/TLS enforcement** for all database connections
-- **Environment variable isolation** for sensitive configuration
-- **No credential logging** in production builds
+- **OAuth token rotation** prevents credential staleness; tokens are never logged.
+- **Least-privilege grants** — the app SP gets only `USAGE` + `SELECT` on the synced table.
+- **SSL/TLS enforced** (`sslmode=require`) for all database connections.
+- **Environment variable isolation** for sensitive configuration.
 
 ## 📊 Monitoring
 
-### Key Metrics to Monitor
-
+### Key metrics
 - **Request latency** (`X-Process-Time` header)
-- **Token refresh frequency** (log analysis)
+- **Token refresh events** (logs)
 - **Connection pool utilization**
 - **Database query performance**
 
-### Log Messages
-
+### Log messages
 ```
-# Token refresh events
-"Background token refresh: Generating fresh PostgreSQL OAuth token"
-"Background token refresh: Token updated successfully"
-
-# Performance tracking
-"Request: GET /orders/1 - 8.3ms"
+Token refresh succeeded (attempt 1)
+Request: GET /api/v1/1 - 8.3ms
 ```
 
 ## 🚨 Troubleshooting
 
-### Common Issues
-
-**Connection timeouts:**
-- Increase `DB_COMMAND_TIMEOUT` for slow queries
-- Check database instance performance
+- **`503` from data endpoints:** the engine hasn't initialized — confirm the Lakebase project exists and the app can reach it (and that the `postdeploy` grant ran).
+- **`permission denied for table`:** the app SP lacks `SELECT` — re-run `databricks bundle deploy` (which re-runs the grant) or apply the grant manually.
+- **Slow queries:** raise `DB_COMMAND_TIMEOUT` (now enforced as a server-side `statement_timeout`).
 
 ## How to get help
 
-Databricks support doesn't cover this content. For questions or bugs, please open a GitHub issue and the team will help on a best effort basis.
+Databricks support doesn't cover this content. For questions or bugs, please open a GitHub issue and the team will help on a best-effort basis.
 
 ## 📄 License
 
-&copy; 2025 Databricks, Inc. All rights reserved. The source in this notebook is provided subject to the [Databricks License](https://databricks.com/db-license-source).
+&copy; 2025 Databricks, Inc. All rights reserved. The source is provided subject to the [Databricks License](https://databricks.com/db-license-source).
 
 | Library | Description | License | Source |
 |---------|-------------|---------|---------|
 | FastAPI | High-performance API framework | MIT | [GitHub](https://github.com/tiangolo/fastapi) |
-| SQLAlchemy | SQL toolkit and ORM | MIT | [GitHub](https://github.com/sqlalchemy/sqlalchemy) |
+| SQLAlchemy / SQLModel | SQL toolkit, ORM, and typed models | MIT | [GitHub](https://github.com/sqlalchemy/sqlalchemy) |
 | Databricks SDK | Official Databricks SDK | Apache 2.0 | [GitHub](https://github.com/databricks/databricks-sdk-py) |
-| asyncpg | Async PostgreSQL driver | Apache 2.0 | [GitHub](https://github.com/MagicStack/asyncpg) |
+| psycopg | PostgreSQL driver (psycopg3) | LGPL | [GitHub](https://github.com/psycopg/psycopg) |
 | Pydantic | Data validation using Python type hints | MIT | [GitHub](https://github.com/pydantic/pydantic) |
 
 | Dataset | Disclaimer |
 |---------|-------------|
-| TPC-H | The TPC-H Dataset is available without charge from TPC under the terms of the the [TPC End User License Agreement](https://tpc.org/TPC_Documents_Current_Versions/txt/eula.txt).
+| TPC-H | The TPC-H Dataset is available without charge from TPC under the terms of the [TPC End User License Agreement](https://tpc.org/TPC_Documents_Current_Versions/txt/eula.txt). |

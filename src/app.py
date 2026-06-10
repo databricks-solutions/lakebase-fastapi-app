@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError
-from sqlmodel import SQLModel
 
 from .routers import api_router
 
@@ -35,11 +34,10 @@ async def lifespan(app: FastAPI):
 
     if database_exists:
         try:
+            # NOTE: no DDL here. The app reads a synced table owned by the sync
+            # pipeline; it must never issue CREATE/ALTER. Provisioning is the
+            # bundle's job. This keeps the app SP free of CREATE privileges.
             init_engine()
-            from core.database import engine
-
-            async with engine.begin() as conn:
-                await conn.run_sync(SQLModel.metadata.create_all)
             await start_token_refresh()
             health_check_task = asyncio.create_task(check_database_health(300))
             logger.info("Database engine initialized and health monitoring started")
@@ -48,10 +46,12 @@ async def lifespan(app: FastAPI):
             logger.info("Application will start without database functionality")
     else:
         logger.info(
-            "No Lakebase database instance found - starting with limited functionality"
+            "No Lakebase project found - starting with limited functionality "
+            "(data endpoints return 503 until provisioned)"
         )
         logger.info(
-            "Use POST /api/v1/resources/create-lakebase-resources to create database resources"
+            "Provision Lakebase via `databricks bundle deploy` (its postdeploy hook "
+            "grants the app service principal access)"
         )
 
     logger.info("Application startup complete")
@@ -65,7 +65,13 @@ async def lifespan(app: FastAPI):
             await health_check_task
         except asyncio.CancelledError:
             logger.info("Database health check task cancelled successfully")
-        await stop_token_refresh()
+    await stop_token_refresh()
+    # Cleanly close the connection pool so connections are released on shutdown.
+    from .core.database import engine
+
+    if engine is not None:
+        await engine.dispose()
+        logger.info("Database engine disposed")
     logger.info("Application shutdown complete")
 
 

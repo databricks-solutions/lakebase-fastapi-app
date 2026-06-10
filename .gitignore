@@ -8,6 +8,8 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+.vscode
+.databricks
 .Python
 build/
 develop-eggs/
@@ -26,6 +28,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+# Kept out of the repo for portability: the Databricks App build uses the pip path
+# (committed requirements.txt + Python 3.11). uv.lock embeds a private index URL and
+# isn't portable; .python-version is a uv signal that conflicts with the pip path.
+# Both are fine to keep locally for your own uv workflow.
 uv.lock
 .python-version
 

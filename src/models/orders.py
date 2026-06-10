@@ -34,16 +34,6 @@ class OrderSample(SQLModel):
     sample_order_keys: list[int]
 
 
-class OrderStatusUpdate(SQLModel):
-    o_orderstatus: str
-
-
-class OrderStatusUpdateResponse(SQLModel):
-    o_orderkey: int
-    o_orderstatus: str
-    message: str
-
-
 class OrderListResponse(SQLModel):
     orders: list[OrderRead]
     pagination: "PaginationInfo"
